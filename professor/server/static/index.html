@@ -50,8 +50,15 @@
   <!-- ── material ───────────────────────────────────────────────── -->
   <nav class="rail" aria-label="Material">
     <div class="rail-head">
-      <h2>Material</h2>
+      <div class="tabs" role="tablist">
+        <button role="tab" id="tab-course" aria-selected="true">Course</button>
+        <button role="tab" id="tab-material" aria-selected="false">Material</button>
+      </div>
       <button class="ghost" data-open="upload" title="Add materials">＋</button>
+    </div>
+    <div id="rail-progress" hidden>
+      <div class="bar"><span id="bar-fill"></span></div>
+      <p id="bar-label"></p>
     </div>
     <div id="rail-body"></div>
   </nav>
@@ -96,6 +103,57 @@
   </button>
 </main>
 
+<!-- ── first run ────────────────────────────────────────────────── -->
+<dialog class="sheet welcome" id="welcome">
+  <p class="welcome-mark">my-favorite-professor<span class="welcome-ext">.??</span></p>
+  <h2>One thing before you start</h2>
+  <p class="note">
+    This app runs on your own Anthropic key, so your material and your
+    questions go straight from your machine to Anthropic — nothing routes
+    through anyone else. You'll only do this once.
+  </p>
+
+  <ol class="steps">
+    <li>
+      <span class="step-n">1</span>
+      <div>
+        <p>Open the Anthropic console and sign in.</p>
+        <a class="step-link" href="https://console.anthropic.com/settings/keys"
+           target="_blank" rel="noopener noreferrer">console.anthropic.com/settings/keys ↗</a>
+      </div>
+    </li>
+    <li>
+      <span class="step-n">2</span>
+      <div>
+        <p>Click <strong>Create Key</strong>, name it something like
+           <code>my-favorite-professor</code>, and copy it.</p>
+        <p class="step-aside">It's shown once. If you lose it, make another.</p>
+      </div>
+    </li>
+    <li>
+      <span class="step-n">3</span>
+      <div>
+        <p>Paste it here.</p>
+        <div class="row">
+          <input id="welcome-key" type="password" placeholder="sk-ant-…"
+                 autocomplete="off" aria-label="Anthropic API key">
+          <button class="primary" id="welcome-save" type="button">Save</button>
+        </div>
+        <p class="status" id="welcome-status"></p>
+      </div>
+    </li>
+  </ol>
+
+  <p class="welcome-foot">
+    Stored at <code>~/.config/my-favorite-professor/config.json</code>, mode
+    0600, read only by this server. It's never sent to the browser and never
+    leaves your machine except to Anthropic.
+  </p>
+  <button class="link-btn" id="welcome-skip" type="button">
+    Skip for now — I'll add it later in Settings
+  </button>
+</dialog>
+
 <!-- ── settings ─────────────────────────────────────────────────── -->
 <dialog class="sheet" id="settings">
   <form method="dialog"><button class="sheet-x" title="Close">×</button></form>
@@ -107,6 +165,7 @@
        at mode 0600 and read only by this server. The browser never receives it.</p>
     <div class="row">
       <input id="api-key" type="password" placeholder="sk-ant-…" autocomplete="off">
+      <button class="primary" id="api-key-save" type="button">Save</button>
       <button class="ghost" id="key-clear" type="button">Remove</button>
     </div>
     <p class="status" id="key-status"></p>
@@ -122,6 +181,18 @@
     <label for="effort">Effort</label>
     <p class="note" id="effort-note">Higher effort thinks longer before answering.</p>
     <div class="segmented" id="effort"></div>
+  </section>
+
+  <section class="field">
+    <label>When your material falls short</label>
+    <p class="note">Let Professor-Claude search the web if your own sources
+       don't cover something. Anything it uses is archived into
+       <code>claude-references-provided/</code>, kept separate from what you
+       chose, so you can always tell the two apart.</p>
+    <label class="switch">
+      <input type="checkbox" id="web-toggle">
+      <span>Allow web supplements</span>
+    </label>
   </section>
 
   <section class="field">
@@ -164,6 +235,54 @@
   </label>
 
   <ul class="upload-log" id="upload-log"></ul>
+</dialog>
+
+<!-- ── learning profile ─────────────────────────────────────────── -->
+<dialog class="sheet" id="profile">
+  <form method="dialog"><button class="sheet-x" title="Close">×</button></form>
+  <h2>How you learn</h2>
+  <p class="note">
+    Built from the explanations you marked as landing, and the ones you had to
+    ask twice about. Professor-Claude reads this before every answer. It's
+    yours — take it anywhere.
+  </p>
+
+  <div class="pf-stats" id="pf-stats"></div>
+  <pre class="pf-text" id="pf-text"></pre>
+
+  <div class="row" style="justify-content:space-between;align-items:center">
+    <p class="status" id="pf-status" style="margin:0"></p>
+    <span style="display:flex;gap:.5rem">
+      <button class="ghost" id="pf-rebuild" type="button">Rebuild</button>
+      <button class="primary" id="pf-copy" type="button">Copy</button>
+    </span>
+  </div>
+  <p class="welcome-foot" id="pf-path"></p>
+</dialog>
+
+<!-- ── build the course ─────────────────────────────────────────── -->
+<dialog class="sheet" id="course-build">
+  <form method="dialog"><button class="sheet-x" title="Close">×</button></form>
+  <h2 id="cb-title">Build the course</h2>
+  <p class="note" id="cb-intro">
+    Claude reads everything in this subject and works out an order to learn it
+    in — what comes first, what depends on what, and which of your sources
+    covers each part.
+  </p>
+
+  <section class="field">
+    <label for="cb-goal">What do you want to be able to do?</label>
+    <p class="note">The same material makes a different course depending on
+       where you're heading. Be concrete.</p>
+    <textarea id="cb-goal" rows="3"
+              placeholder="e.g. live in a terminal for day-to-day work — enough that when I need to do something I know roughly where to look"></textarea>
+    <div class="goal-picks" id="cb-picks"></div>
+  </section>
+
+  <p class="status" id="cb-status"></p>
+  <div class="row" style="justify-content:flex-end">
+    <button class="primary" id="cb-go" type="button">Build it</button>
+  </div>
 </dialog>
 
 <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>

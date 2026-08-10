@@ -69,6 +69,58 @@ material still works offline and Claude can actually see the figures.
 
 ---
 
+## The course
+
+Once you've added material, press **Build the course**. Claude reads
+everything in the subject and works out an order to learn it in — modules,
+lessons, what depends on what, and which of your sources covers each part.
+
+It asks what you're aiming at first, and it matters: "enough to live in a
+terminal" and "enough to put it on a CV" produce different courses over
+identical material.
+
+Two things it does deliberately:
+
+- **Every lesson cites your sources.** A lesson that can't point at something
+  in your library is dropped rather than shown — otherwise it's teaching you
+  something you can't go and check.
+- **It tells you what's missing.** If an obvious prerequisite isn't in your
+  material, it says so under the module instead of inventing a lesson for it.
+
+Progress is tracked per lesson and survives rebuilding, so adding a source and
+regenerating doesn't lose what you'd already read.
+
+## The learning profile
+
+This is the point of the whole thing. When an explanation lands, press
+**That clicked**. When one is too thin, press **Go deeper**. Those become
+observations in `~/.my-favorite-professor/usr-learning-profile/evidence/`, and
+every few of them Claude rewrites `profile.md` — a short description of how
+*you* understand things.
+
+Professor-Claude reads that profile before every answer. Over time it stops
+being a generic explainer and starts being one that knows you find the
+mechanism more useful than the syntax, or that you want the example first.
+
+It's yours and it's portable. Open it from the menu and press **Copy**, then
+paste it into any Claude:
+
+> Here's how I learn best. Teach me accordingly.
+
+Or `my-favorite-professor profile export` for a zip.
+
+## When your material falls short
+
+Off by default. Turn on **Allow web supplements** in Settings and Professor-
+Claude may search the web when your own sources genuinely don't cover
+something — and it's told to prefer primary sources and to say when it's doing
+it.
+
+Anything it uses is captured into `claude-references-provided/` with its
+images and an offline archive, exactly like a page you saved yourself. The
+separate directory is the point: you can always tell what you chose from what
+Claude went and found.
+
 ## Where things live
 
 Three separate places, deliberately. None of them is inside this repo.

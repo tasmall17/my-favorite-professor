@@ -28,6 +28,9 @@ const state = {
   doc: null,          // rendered note
   history: [],        // [{role, content}]
   busy: false,
+  view: "course",     // which rail tab is showing
+  course: null,       // syllabus + progress for the current topic
+  lesson: null,       // {module, lesson} when reading via the course
 };
 
 /* ── subject colour ────────────────────────────────────────────────
@@ -121,12 +124,18 @@ function renderSubjects() {
   }
 }
 
-function selectTopic(name) {
+function currentTopic() {
+  return state.topics.find((t) => t.name === state.topic);
+}
+
+async function selectTopic(name) {
   state.topic = name;
+  state.lesson = null;
   applyHue(name);
   renderSubjects();
+  await loadCourse();
   renderRail();
-  const topic = state.topics.find((t) => t.name === name);
+  const topic = currentTopic();
   if (topic && topic.notes.length) openNote(topic.notes[0].id);
   else showEmptyReading();
 }
@@ -134,8 +143,101 @@ function selectTopic(name) {
 /* ── the rail ──────────────────────────────────────────────────── */
 
 function renderRail() {
+  $("#tab-course").setAttribute("aria-selected", String(state.view === "course"));
+  $("#tab-material").setAttribute("aria-selected", String(state.view === "material"));
+  if (state.view === "course") renderCourse();
+  else renderMaterial();
+}
+
+/* The course view. Modules are numbered because the order *is* the content --
+ * a course is a sequence, and the number says where you are in it. */
+function renderCourse() {
   const body = $("#rail-body");
   body.replaceChildren();
+  const bar = $("#rail-progress");
+  const topic = state.topics.find((t) => t.name === state.topic);
+  const syllabus = state.course;
+
+  if (!topic || !topic.notes.length) {
+    bar.hidden = true;
+    body.append(el("p", "rail-empty", "Add some material first — the course is built from it."));
+    return;
+  }
+
+  if (!syllabus || !syllabus.exists) {
+    bar.hidden = true;
+    const cta = el("div", "rail-cta");
+    cta.append(el("p", null,
+      `Claude can read your ${topic.notes.length} ` +
+      `${topic.notes.length === 1 ? "source" : "sources"} and work out an order ` +
+      `to learn them in.`));
+    const button = el("button", "primary", "Build the course");
+    button.onclick = openCourseBuild;
+    cta.append(button);
+    body.append(cta);
+    return;
+  }
+
+  bar.hidden = false;
+  const pct = syllabus.total_lessons
+    ? Math.round((syllabus.done_lessons / syllabus.total_lessons) * 100) : 0;
+  $("#bar-fill").style.width = pct + "%";
+
+  // The label doubles as the way back to a rebuild. Without it the only route
+  // is to change your material and wait for the stale prompt, which is no
+  // route at all when you simply want a different goal.
+  const label = $("#bar-label");
+  label.replaceChildren();
+  label.append(el("span", null, `${syllabus.done_lessons}/${syllabus.total_lessons} lessons`));
+  const again = el("button", "rebuild-link", "rebuild");
+  again.type = "button";
+  again.title = "Rebuild the course, or change what you're aiming at";
+  again.onclick = openCourseBuild;
+  label.append(again);
+
+  if (syllabus.stale) {
+    const note = el("div", "stale-note");
+    note.append(el("span", null, "Your material changed since this was built."));
+    const rebuild = el("button", null, "Rebuild the course");
+    rebuild.onclick = openCourseBuild;
+    note.append(rebuild);
+    body.append(note);
+  }
+
+  syllabus.modules.forEach((module, index) => {
+    const wrap = el("div", "module");
+    const head = el("div", "module-head");
+    head.append(el("span", "module-n", String(index + 1).padStart(2, "0")));
+    head.append(el("span", "module-title", module.title));
+    const done = module.lessons.filter((l) => l.done).length;
+    head.append(el("span", "module-done", `${done}/${module.lessons.length}`));
+    wrap.append(head);
+
+    for (const lesson of module.lessons) {
+      const button = el("button", "lesson");
+      button.type = "button";
+      button.dataset.done = lesson.done ? "1" : "0";
+      button.setAttribute("aria-current", String(state.lesson?.key === lesson.key));
+      button.append(el("span", "tick"));
+      button.append(el("span", "lesson-title", lesson.title));
+      if (lesson.minutes) button.append(el("span", "mins", `${lesson.minutes}m`));
+      button.onclick = () => openLesson(module, lesson);
+      wrap.append(button);
+    }
+
+    if (module.gaps && module.gaps.length) {
+      const gaps = el("div", "module-gaps");
+      gaps.textContent = "Not covered by your material: " + module.gaps.join("; ");
+      wrap.append(gaps);
+    }
+    body.append(wrap);
+  });
+}
+
+function renderMaterial() {
+  const body = $("#rail-body");
+  body.replaceChildren();
+  $("#rail-progress").hidden = true;
 
   const topic = state.topics.find((t) => t.name === state.topic);
   if (!topic || !topic.notes.length) {
@@ -191,17 +293,23 @@ function showEmptyReading() {
   resetProfessor();
 }
 
-async function openNote(id) {
+async function openNote(id, { keepLesson = false } = {}) {
   try {
     const doc = await api(`/api/note?id=${encodeURIComponent(id)}`);
     state.note = id;
     state.doc = doc;
     state.history = [];
+    // Opening a note directly from the Material tab leaves the course; only a
+    // lesson click keeps the lesson framing attached.
+    if (!keepLesson) state.lesson = null;
 
     const body = $("#reading-body");
     body.replaceChildren();
 
     const wrap = el("article", "doc");
+    if (state.lesson) {
+      wrap.append(lessonHeader(state.lesson.module, state.lesson.lesson));
+    }
     const head = el("div", "doc-head");
     const kicker = el("div", "doc-kicker");
     const tag = el("span", doc.source === "claude" ? "tag claude" : "tag",
@@ -222,6 +330,149 @@ async function openNote(id) {
     resetProfessor();
   } catch (err) {
     toast(err.message);
+  }
+}
+
+/* ── the course ────────────────────────────────────────────────── */
+
+async function loadCourse() {
+  if (!state.topic) { state.course = null; return; }
+  try {
+    state.course = await api(`/api/course?topic=${encodeURIComponent(state.topic)}`);
+  } catch {
+    state.course = null;   // no syllabus yet is a normal state, not an error
+  }
+}
+
+/* A lesson is a framing over sources, not a document of its own. Opening one
+ * loads its first source and puts the lesson's own header above it, so you
+ * always read the real material rather than a summary of it. */
+async function openLesson(module, lesson) {
+  state.lesson = { module, lesson };
+  await openNote(lesson.note_ids[0], { keepLesson: true });
+  renderRail();
+}
+
+function lessonHeader(module, lesson) {
+  const head = el("div", "lesson-head");
+  head.append(el("p", "lesson-eyebrow", `${module.title} · lesson`));
+  head.append(el("h2", null, lesson.title));
+  if (lesson.summary) head.append(el("p", null, lesson.summary));
+
+  if (lesson.subtopics?.length) {
+    const covers = el("div", "lesson-covers");
+    for (const item of lesson.subtopics) covers.append(el("span", null, item));
+    head.append(covers);
+  }
+
+  const actions = el("div", "lesson-actions");
+  const done = el("button", "mark-done", lesson.done ? "Read ✓" : "Mark as read");
+  done.type = "button";
+  done.dataset.done = lesson.done ? "1" : "0";
+  done.onclick = () => markLesson(lesson, !lesson.done);
+  actions.append(done);
+
+  // More than one source means the lesson spans them; make the others reachable
+  // rather than stranding them behind the first.
+  if (lesson.note_ids.length > 1) {
+    const sources = el("span", "lesson-sources");
+    sources.append(document.createTextNode("Also reads: "));
+    for (const id of lesson.note_ids.slice(1)) {
+      const note = currentTopic()?.notes.find((n) => n.id === id);
+      if (!note) continue;
+      const link = el("button", null, note.title);
+      link.type = "button";
+      link.onclick = () => openNote(id, { keepLesson: true });
+      sources.append(link);
+    }
+    actions.append(sources);
+  }
+
+  head.append(actions);
+  return head;
+}
+
+async function markLesson(lesson, done) {
+  try {
+    state.course = await api("/api/course/progress", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ topic: state.topic, key: lesson.key, done }),
+    });
+    lesson.done = done;
+    renderRail();
+    const button = $(".mark-done");
+    if (button) {
+      button.dataset.done = done ? "1" : "0";
+      button.textContent = done ? "Read ✓" : "Mark as read";
+    }
+    if (done && state.course.done_lessons === state.course.total_lessons) {
+      toast("That's the whole course. Add more material to go further.");
+    }
+  } catch (err) {
+    toast(err.message);
+  }
+}
+
+const GOAL_SUGGESTIONS = [
+  "Get comfortable enough to use this day to day",
+  "Build a specific thing I have in mind",
+  "Know it well enough to put on a CV",
+  "Just enough to unblock the project I'm on",
+];
+
+function openCourseBuild() {
+  closePops();
+  const existing = state.course?.exists;
+  $("#cb-title").textContent = existing ? "Rebuild the course" : "Build the course";
+  $("#cb-go").textContent = existing ? "Rebuild it" : "Build it";
+  $("#cb-status").textContent = "";
+  $("#cb-status").removeAttribute("data-ok");
+  $("#cb-goal").value =
+    state.course?.goal && !state.course.goal.startsWith("Become genuinely useful")
+      ? state.course.goal
+      : (state.settings?.goals?.[state.topic] || "");
+
+  const picks = $("#cb-picks");
+  picks.replaceChildren();
+  for (const suggestion of GOAL_SUGGESTIONS) {
+    const button = el("button", null, suggestion);
+    button.type = "button";
+    button.onclick = () => { $("#cb-goal").value = suggestion; $("#cb-goal").focus(); };
+    picks.append(button);
+  }
+  $("#course-build").showModal();
+}
+
+async function buildCourse() {
+  const status = $("#cb-status");
+  const button = $("#cb-go");
+  button.disabled = true;
+  status.removeAttribute("data-ok");
+  status.textContent = "Reading your material and working out an order… "
+                     + "this takes a minute.";
+
+  try {
+    state.course = await api("/api/course/build", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ topic: state.topic, goal: $("#cb-goal").value }),
+    });
+    state.settings = await api("/api/settings");
+    status.dataset.ok = "1";
+    status.textContent =
+      `Built: ${state.course.modules.length} modules, ${state.course.total_lessons} lessons.`;
+    state.view = "course";
+    renderRail();
+    setTimeout(() => $("#course-build").close(), 1100);
+    if (state.course.dropped_lessons) {
+      toast(`${state.course.dropped_lessons} lessons dropped — they cited material you don't have.`);
+    }
+  } catch (err) {
+    status.dataset.ok = "0";
+    status.textContent = err.message;
+  } finally {
+    button.disabled = false;
   }
 }
 
@@ -295,7 +546,7 @@ function renderAnswer(text) {
   }).join("");
 }
 
-async function ask(question) {
+async function ask(question, { quiet = false } = {}) {
   if (state.busy || !state.doc) return;
   if (!state.settings?.has_key) {
     toast("Add your API key in Settings first");
@@ -358,14 +609,21 @@ async function ask(question) {
           answer = event.text || answer;
           target.innerHTML = renderAnswer(answer);
           showUsage(event.usage);
+          if (event.saved?.length) showSaved(target.parentElement, event.saved);
         }
       }
     }
 
     if (answer) {
+      // A repeat of a question already asked in this session means the first
+      // answer didn't land — worth knowing, and cheap to notice.
+      const repeated = state.history.some(
+        (t) => t.role === "user" && t.content.trim().toLowerCase() === question.trim().toLowerCase());
+      if (repeated && !quiet) sendSignal("reasked", question, answer);
+
       state.history.push({ role: "user", content: question });
       state.history.push({ role: "assistant", content: answer });
-      addClickedButton(target.parentElement);
+      addAnswerActions(target.parentElement, question, answer);
     }
   } catch (err) {
     target.parentElement.className = "msg msg-err";
@@ -375,6 +633,31 @@ async function ask(question) {
     $("#prof-send").disabled = false;
     $("#prof-log").scrollTop = $("#prof-log").scrollHeight;
   }
+}
+
+/* When Claude looks something up, say so and say where it went. A supplement
+ * that lands silently in your library is indistinguishable from one you chose
+ * yourself, which is exactly what the split exists to prevent. */
+function showSaved(message, saved) {
+  const ok = saved.filter((s) => s.ok);
+  const box = el("div", "saved");
+  box.append(el("p", "saved-head",
+    ok.length ? "Not in your material — saved for you:" : "Tried to look this up:"));
+
+  for (const source of saved) {
+    const row = el("div", "saved-row");
+    row.dataset.ok = source.ok ? "1" : "0";
+    const link = el("a", null, source.title || source.url);
+    link.href = source.url;
+    link.target = "_blank";
+    link.rel = "noopener noreferrer";
+    row.append(link);
+    row.append(el("span", "saved-note",
+      source.ok ? `${(source.words || 0).toLocaleString()} words` : "couldn't fetch"));
+    box.append(row);
+  }
+  message.append(box);
+  if (ok.length) refreshTopics(state.topic).then(renderRail);
 }
 
 function showUsage(usage) {
@@ -390,16 +673,98 @@ function showUsage(usage) {
 
 /* The strongest signal for the learning profile is the one you give on
  * purpose. Passive signals fill in around it. */
-function addClickedButton(message) {
-  const button = el("button", "clicked", "That clicked");
-  button.type = "button";
-  button.dataset.on = "0";
-  button.onclick = () => {
-    button.dataset.on = button.dataset.on === "1" ? "0" : "1";
-    button.textContent = button.dataset.on === "1" ? "Noted — that clicked" : "That clicked";
-    if (button.dataset.on === "1") toast("Noted. Professor-Claude will lean this way.");
+function addAnswerActions(message, question, answer) {
+  const row = el("div", "answer-actions");
+
+  const clicked = el("button", "clicked", "That clicked");
+  clicked.type = "button";
+  clicked.dataset.on = "0";
+  clicked.onclick = async () => {
+    if (clicked.dataset.on === "1") return;
+    clicked.dataset.on = "1";
+    clicked.textContent = "Noted ✓";
+    await sendSignal("clicked", question, answer);
   };
-  message.append(button);
+  row.append(clicked);
+
+  // Asking for more is itself evidence that the answer was too thin, so the
+  // button records the signal as well as continuing the conversation.
+  const deeper = el("button", "clicked", "Go deeper");
+  deeper.type = "button";
+  deeper.onclick = () => {
+    deeper.remove();
+    sendSignal("expanded", question, answer);
+    ask("Tell me more about that — the part you left out.", { quiet: true });
+  };
+  row.append(deeper);
+
+  message.append(row);
+}
+
+async function sendSignal(kind, question, answer) {
+  try {
+    const result = await api("/api/profile/signal", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        kind, question, answer,
+        topic: state.topic,
+        lesson: state.lesson?.lesson?.title || state.doc?.title || "",
+      }),
+    });
+    if (result.resynthesised) {
+      toast("Professor-Claude updated how it explains things to you.");
+    } else if (kind === "clicked") {
+      toast(result.next_synthesis_in
+        ? `Noted. ${result.next_synthesis_in} more and the profile updates.`
+        : "Noted.");
+    }
+  } catch {
+    /* Losing one signal is not worth interrupting a study session over. */
+  }
+}
+
+/* ── the learning profile ──────────────────────────────────────── */
+
+async function showProfile() {
+  try {
+    renderProfile(await api("/api/profile"));
+    $("#profile").showModal();
+  } catch (err) {
+    toast(err.message);
+  }
+}
+
+function renderProfile(data) {
+  const stats = $("#pf-stats");
+  stats.replaceChildren();
+  const pairs = [
+    ["observations", data.signals],
+    ["landed", data.counts?.clicked || 0],
+    ["too thin", data.counts?.expanded || 0],
+    ["re-asked", data.counts?.reasked || 0],
+  ];
+  for (const [label, value] of pairs) {
+    const cell = el("div", "pf-stat");
+    cell.append(el("span", "pf-n", String(value)), el("span", null, label));
+    stats.append(cell);
+  }
+
+  const text = $("#pf-text");
+  if (data.exists && data.text) {
+    text.textContent = data.text;
+    text.removeAttribute("data-empty");
+  } else {
+    text.dataset.empty = "1";
+    text.textContent = data.signals
+      ? `${data.signals} observations recorded. The profile is written once `
+        + `${data.next_synthesis_in} more come in, or press Rebuild now.`
+      : "Nothing yet. Ask Professor-Claude something, and when an answer "
+        + "lands press “That clicked” — that's what this is built from.";
+  }
+  $("#pf-copy").disabled = !(data.exists && data.text);
+  $("#pf-path").textContent = data.dir;
+  $("#pf-status").textContent = "";
 }
 
 /* ── settings ──────────────────────────────────────────────────── */
@@ -411,6 +776,7 @@ function renderSettings() {
   $("#lib-hint").textContent = settings.library || "";
   $("#mirror-path").textContent = settings.mirror_path;
   $("#mirror-toggle").checked = settings.mirror_to_downloads !== false;
+  $("#web-toggle").checked = !!settings.web_supplements;
 
   const status = $("#key-status");
   if (settings.has_key) {
@@ -455,6 +821,40 @@ function renderSettings() {
   } else {
     field.hidden = true;
     $("#effort-note").textContent = "";
+  }
+}
+
+/* The key is checked before it's stored. Verification is a free call to the
+ * models endpoint, so there's no reason to accept a typo and let it surface
+ * as a failed question ten minutes later. */
+async function submitKey(input, status) {
+  const key = input.value.trim();
+  if (!key) { input.focus(); return; }
+
+  status.textContent = "Checking…";
+  status.removeAttribute("data-ok");
+
+  try {
+    const result = await api("/api/key", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ api_key: key }),
+    });
+    status.textContent = result.message;
+    status.dataset.ok = result.ok ? "1" : "0";
+
+    if (result.ok) {
+      input.value = "";
+      state.settings = result.settings;
+      renderSettings();
+      setTimeout(() => {
+        $("#welcome").close();
+        toast("Key saved. Ask Professor-Claude anything.");
+      }, 900);
+    }
+  } catch (err) {
+    status.textContent = err.message;
+    status.dataset.ok = "0";
   }
 }
 
@@ -535,9 +935,14 @@ async function refreshTopics(preferred) {
   state.topics = data.topics;
   const wanted = preferred || state.topic;
   const found = state.topics.find((t) => t.name === wanted);
-  state.topic = found ? found.name : (state.topics[0]?.name ?? null);
+  // Falling back to the alphabetically-first subject lands you on an empty one
+  // whenever you have several. Prefer a subject that actually has material.
+  state.topic = found
+    ? found.name
+    : (state.topics.find((t) => t.notes.length) ?? state.topics[0])?.name ?? null;
   applyHue(state.topic || "");
   renderSubjects();
+  await loadCourse();
   renderRail();
 }
 
@@ -557,6 +962,11 @@ function wire() {
   for (const button of document.querySelectorAll("[data-open]")) {
     button.onclick = () => openSheet(button.dataset.open);
   }
+
+  // Course / Material tabs
+  $("#tab-course").onclick = () => { state.view = "course"; renderRail(); };
+  $("#tab-material").onclick = () => { state.view = "material"; renderRail(); };
+  $("#cb-go").onclick = buildCourse;
 
   $("#new-topic-form").onsubmit = async (event) => {
     event.preventDefault();
@@ -582,17 +992,49 @@ function wire() {
   };
 
   // Settings
-  $("#api-key").onchange = (event) => {
-    const value = event.target.value.trim();
-    if (value) { saveSettings({ api_key: value }); event.target.value = ""; }
-  };
+  $("#api-key-save").onclick = () => submitKey($("#api-key"), $("#key-status"));
+  $("#api-key").addEventListener("keydown", (event) => {
+    if (event.key === "Enter") { event.preventDefault(); $("#api-key-save").click(); }
+  });
   $("#key-clear").onclick = () => saveSettings({ api_key: null });
+
+  // First run
+  $("#welcome-save").onclick = () => submitKey($("#welcome-key"), $("#welcome-status"));
+  $("#welcome-key").addEventListener("keydown", (event) => {
+    if (event.key === "Enter") { event.preventDefault(); $("#welcome-save").click(); }
+  });
+  $("#welcome-skip").onclick = () => $("#welcome").close();
   $("#initials").onchange = (event) => saveSettings({ initials: event.target.value });
   $("#mirror-toggle").onchange = (event) =>
     saveSettings({ mirror_to_downloads: event.target.checked });
-  $("#open-profile").onclick = (event) => {
+  $("#web-toggle").onchange = (event) =>
+    saveSettings({ web_supplements: event.target.checked });
+  $("#open-profile").onclick = async (event) => {
     event.preventDefault();
-    toast(`Your profile lives in ${state.settings.profile_dir}`);
+    closePops();
+    await showProfile();
+  };
+  $("#pf-rebuild").onclick = async () => {
+    const status = $("#pf-status");
+    status.textContent = "Reading your sessions…";
+    status.removeAttribute("data-ok");
+    try {
+      const result = await api("/api/profile/synthesise", { method: "POST" });
+      renderProfile(result);
+      status.dataset.ok = "1";
+      status.textContent = "Rebuilt.";
+    } catch (err) {
+      status.dataset.ok = "0";
+      status.textContent = err.message;
+    }
+  };
+  $("#pf-copy").onclick = async () => {
+    try {
+      await navigator.clipboard.writeText($("#pf-text").textContent);
+      toast("Copied. Paste it into any Claude.");
+    } catch {
+      toast("Couldn't copy — select the text and copy it manually.");
+    }
   };
 
   // Uploads
@@ -648,8 +1090,13 @@ async function boot() {
     if (topic && topic.notes.length) openNote(topic.notes[0].id);
     else showEmptyReading();
 
-    // First run: no key means nothing works, so say so straight away.
-    if (!state.settings.has_key) openSheet("settings");
+    // First run: nothing works without a key, so explain where to get one
+    // rather than dropping them into a settings form with an empty box.
+    if (!state.settings.has_key) {
+      $("#welcome .welcome-ext").textContent = extLabel(
+        state.topics.find((t) => t.name === state.topic));
+      $("#welcome").showModal();
+    }
   } catch (err) {
     toast("Couldn't reach the server: " + err.message);
   }

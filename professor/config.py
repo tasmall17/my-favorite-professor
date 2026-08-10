@@ -59,6 +59,10 @@ class ModelSpec:
     supports_adaptive_thinking: bool
     cache_min_tokens: int
     efforts: tuple[str, ...] = ()
+    # Which web-search tool version this model takes. The dynamic-filtering
+    # variant is newer-models-only; older ones keep the basic tool, and sending
+    # the wrong version is an error rather than a downgrade.
+    web_search_tool: str = "web_search_20250305"
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -82,6 +86,7 @@ MODELS: dict[str, ModelSpec] = {
         supports_adaptive_thinking=True,
         cache_min_tokens=512,
         efforts=EFFORTS,
+        web_search_tool="web_search_20260209",
     ),
     "claude-sonnet-5": ModelSpec(
         id="claude-sonnet-5",
@@ -91,6 +96,7 @@ MODELS: dict[str, ModelSpec] = {
         supports_adaptive_thinking=True,
         cache_min_tokens=1024,
         efforts=EFFORTS,
+        web_search_tool="web_search_20260209",
     ),
     "claude-haiku-4-5": ModelSpec(
         id="claude-haiku-4-5",
@@ -135,6 +141,7 @@ class Config:
     effort: str = DEFAULT_EFFORT
     library: str = ""
     mirror_to_downloads: bool | None = None  # None = never asked
+    web_supplements: bool = False
     initials: str = ""
     goals: dict[str, str] = field(default_factory=dict)
 
@@ -161,6 +168,7 @@ class Config:
             "effort": self.effort,
             "library": self.library,
             "mirror_to_downloads": self.mirror_to_downloads,
+            "web_supplements": self.web_supplements,
             "initials": self.initials,
             "goals": self.goals,
         }
@@ -197,6 +205,7 @@ class Config:
             "library": str(self.library_path()),
             "mirror_to_downloads": self.mirror_to_downloads,
             "mirror_path": str(DOWNLOADS_MIRROR),
+            "web_supplements": self.web_supplements,
             "initials": self.initials,
             "goals": self.goals,
             "models": [m.as_dict() for m in MODELS.values()],
