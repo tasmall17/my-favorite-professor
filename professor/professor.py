@@ -26,7 +26,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Iterator
 
-from .config import Config, model_spec, request_kwargs
+from .config import MODELS, Config, model_spec, request_kwargs
 
 # Long enough for three paragraphs several times over, with headroom for
 # adaptive thinking -- max_tokens caps thinking and visible text together, so a
@@ -67,6 +67,18 @@ you just said. If code helps, show the smallest version that makes the point.
 They want to be able to *use* this, not recite it. Where it fits naturally, \
 connect an idea to what it lets them do.\
 """
+
+SEARCH_RULE = """
+
+## Looking things up
+
+You can search the web, but their material comes first. Only search when the \
+reading genuinely does not cover what they asked and the answer would be \
+guesswork otherwise. Say that you are doing it and why, in a few words.
+
+Anything you find gets saved into their library alongside their own material, \
+so prefer primary sources -- official documentation, specifications, the \
+project's own pages -- over blog posts and content farms. Cite what you used."""
 
 GOAL_TEMPLATE = """
 ## What they're working towards
@@ -119,7 +131,7 @@ def _client(config: Config):
 
 
 def build_system(*, reading_title: str, reading_text: str, goal: str = "",
-                 profile: str = "") -> list[dict[str, Any]]:
+                 profile: str = "", can_search: bool = False) -> list[dict[str, Any]]:
     """Assemble the system prompt, with the cache breakpoint in the right place.
 
     Order matters and is not cosmetic. Caching is a prefix match, so the blocks
@@ -128,7 +140,9 @@ def build_system(*, reading_title: str, reading_text: str, goal: str = "",
     whole thing is cached together, and the volatile part -- the question --
     stays in `messages`, after everything cached.
     """
-    blocks: list[dict[str, Any]] = [{"type": "text", "text": SYSTEM}]
+    blocks: list[dict[str, Any]] = [
+        {"type": "text", "text": SYSTEM + (SEARCH_RULE if can_search else "")}
+    ]
 
     if profile.strip():
         blocks.append({
@@ -184,6 +198,7 @@ def stream_answer(
     history: list[Turn] | None = None,
     goal: str = "",
     profile: str = "",
+    can_search: bool = False,
 ) -> Iterator[dict[str, Any]]:
     """Stream one answer, yielding `{"type": ...}` events for the transport.
 
@@ -199,9 +214,14 @@ def stream_answer(
 
     system = build_system(
         reading_title=reading_title, reading_text=reading_text,
-        goal=goal, profile=profile,
+        goal=goal, profile=profile, can_search=can_search,
     )
     kwargs = request_kwargs(config.model, config.effort)
+    if can_search:
+        # Declared here rather than in request_kwargs because searching is a
+        # per-conversation choice, not a property of the model.
+        kwargs["tools"] = [{"type": spec.web_search_tool, "name": "web_search",
+                            "max_uses": 4}]
 
     collected: list[str] = []
     try:
@@ -232,14 +252,81 @@ def stream_answer(
     usage = _usage(getattr(final, "usage", None))
     usage["cache_min_tokens"] = spec.cache_min_tokens
     usage["model"] = getattr(final, "model", config.model)
-    yield {"type": "done", "text": "".join(collected), "usage": usage}
+    yield {
+        "type": "done",
+        "text": "".join(collected),
+        "usage": usage,
+        "sources": cited_sources(final),
+    }
+
+
+def cited_sources(message: Any) -> list[dict[str, str]]:
+    """Pages the model actually consulted, pulled off the response.
+
+    Server-tool errors arrive as a successful response whose result `content`
+    is a single error object rather than a list, so the shape is checked before
+    iterating -- an unreachable search should cost the citation list, not the
+    whole answer.
+    """
+    found: list[dict[str, str]] = []
+    seen: set[str] = set()
+
+    for block in getattr(message, "content", []) or []:
+        if getattr(block, "type", "") != "web_search_tool_result":
+            continue
+        results = getattr(block, "content", None)
+        if not isinstance(results, list):
+            continue
+        for result in results:
+            url = getattr(result, "url", "")
+            if url and url not in seen:
+                seen.add(url)
+                found.append({"url": url, "title": getattr(result, "title", "") or url})
+    return found
+
+
+def verify_key(key: str) -> dict[str, Any]:
+    """Check a key before saving it, and report which models it can reach.
+
+    Uses the models endpoint rather than sending a message: it needs the same
+    authentication, costs nothing, and answers the more useful question. A key
+    that authenticates but can't reach the selected model is a real case --
+    catching it here beats discovering it on the first question.
+    """
+    key = (key or "").strip()
+    if not key:
+        return {"ok": False, "message": "Paste a key first."}
+    if not key.startswith("sk-ant-"):
+        return {"ok": False,
+                "message": "Anthropic keys start with sk-ant-. That looks like "
+                           "something else."}
+
+    try:
+        import anthropic
+    except ImportError:  # pragma: no cover - declared dependency
+        return {"ok": False, "message": "The anthropic package is not installed."}
+
+    try:
+        available = {m.id for m in anthropic.Anthropic(api_key=key).models.list()}
+    except Exception as exc:
+        return {"ok": False, "message": _friendly(exc)}
+
+    usable = [m for m in MODELS if m in available]
+    if not usable:
+        return {"ok": True, "models": [],
+                "message": "That key works, but it can't reach Opus, Sonnet or "
+                           "Haiku. Check which workspace it belongs to."}
+    return {"ok": True, "models": usable,
+            "message": f"Key works — {len(usable)} of 3 models available."}
 
 
 def _friendly(exc: Exception) -> str:
     """Turn an SDK exception into something worth showing in the UI."""
     name = type(exc).__name__
     if "Authentication" in name:
-        return "That API key was rejected. Check it in Settings."
+        return "Anthropic rejected that key. Check you copied all of it."
+    if "PermissionDenied" in name:
+        return "That key is valid but not allowed to do this. Check its workspace."
     if "RateLimit" in name:
         return "Rate limited by the API. Give it a moment and try again."
     if "Connection" in name or "Timeout" in name:

@@ -201,11 +201,166 @@ button { cursor: pointer; }
   padding: .85rem 1rem .5rem;
   background: var(--paper);
 }
-.rail-head h2 {
-  margin: 0;
+.tabs { display: flex; gap: .1rem; }
+.tabs button {
+  border: 0; background: none; padding: .2rem .4rem; border-radius: 5px;
   font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase;
   color: var(--slate-dim);
 }
+.tabs button:hover { color: var(--slate); }
+.tabs button[aria-selected="true"] { color: var(--accent); background: var(--accent-wash); }
+
+/* Progress is a fact about the course, so it sits with the course, not in a
+   dashboard somewhere. */
+#rail-progress { padding: .1rem 1rem .7rem; }
+#rail-progress[hidden] { display: none; }
+.bar { height: 3px; border-radius: 2px; background: var(--rule); overflow: hidden; }
+.bar span {
+  display: block; height: 100%; width: 0;
+  background: var(--accent); border-radius: 2px;
+  transition: width .35s ease;
+}
+#bar-label {
+  display: flex; align-items: baseline; justify-content: space-between; gap: .5rem;
+  margin: .35rem 0 0; font: 400 11px var(--mono); color: var(--slate-dim);
+}
+.rebuild-link {
+  border: 0; background: none; padding: 0;
+  font: 400 11px var(--mono); color: var(--slate-dim);
+  text-decoration: underline; text-underline-offset: 2px;
+}
+.rebuild-link:hover { color: var(--accent); }
+
+/* ── course tree ─────────────────────────────────────────────────
+   Modules are numbered because the order is the content: a course is a
+   sequence, and the number tells you where you are in it. */
+
+.module { margin-bottom: .3rem; }
+.module-head {
+  display: flex; align-items: baseline; gap: .5rem;
+  width: 100%; padding: .5rem 1rem .3rem;
+  border: 0; background: none; text-align: left;
+}
+.module-head:hover { background: var(--panel); }
+.module-n {
+  flex: none;
+  font: 600 10px/1 var(--mono); color: var(--accent);
+  padding-top: .15rem;
+}
+.module-title { font-size: 12.5px; font-weight: 600; color: var(--ink); line-height: 1.3; }
+.module-done { margin-left: auto; font: 400 10.5px var(--mono); color: var(--slate-dim); }
+
+.lesson {
+  display: flex; align-items: flex-start; gap: .5rem;
+  width: 100%; padding: .35rem 1rem .35rem 1.9rem;
+  border: 0; border-left: 2px solid transparent; background: none;
+  text-align: left; font-size: 13px; line-height: 1.35; color: var(--ink-soft);
+}
+.lesson:hover { background: var(--panel); }
+.lesson[aria-current="true"] {
+  border-left-color: var(--accent); background: var(--accent-wash);
+  color: var(--ink); font-weight: 500;
+}
+.lesson .tick {
+  flex: none; width: .85rem; height: .85rem; margin-top: .18rem;
+  border: 1.5px solid var(--rule); border-radius: 50%;
+}
+.lesson[data-done="1"] .tick { background: var(--accent); border-color: var(--accent); }
+.lesson[data-done="1"] .lesson-title { color: var(--slate-dim); }
+.lesson .mins { margin-left: auto; font: 400 10.5px var(--mono); color: var(--slate-dim); flex: none; }
+
+.module-gaps {
+  margin: .1rem 1rem .5rem 1.9rem; padding: .35rem .5rem;
+  border-radius: 6px; background: #fdf3e7;
+  font-size: 11.5px; line-height: 1.45; color: var(--amber);
+}
+
+.rail-cta { padding: .75rem 1rem; }
+.rail-cta p { margin: 0 0 .6rem; font-size: 12.5px; line-height: 1.5; color: var(--slate); }
+.rail-cta button { width: 100%; }
+
+.stale-note {
+  margin: 0 1rem .6rem; padding: .4rem .55rem;
+  border-radius: 6px; background: #fdf3e7; color: var(--amber);
+  font-size: 11.5px; line-height: 1.4;
+}
+.stale-note button {
+  margin-top: .3rem; border: 0; background: none; padding: 0;
+  font-size: 11.5px; font-weight: 600; color: var(--amber); text-decoration: underline;
+}
+
+/* ── lesson header in the reading pane ───────────────────────── */
+
+.lesson-head {
+  margin-bottom: 1.75rem; padding: 1rem 1.15rem;
+  border: 1px solid var(--rule); border-radius: 11px; background: var(--paper);
+}
+.lesson-eyebrow {
+  margin: 0 0 .3rem;
+  font: 600 10.5px/1 var(--mono); letter-spacing: .05em;
+  color: var(--accent); text-transform: uppercase;
+}
+.lesson-head h2 { margin: 0 0 .4rem; font: 600 1.05rem/1.3 var(--sans); }
+.lesson-head p { margin: 0 0 .7rem; font-size: 13.5px; line-height: 1.5; color: var(--slate); }
+.lesson-covers { display: flex; flex-wrap: wrap; gap: .3rem; margin-bottom: .85rem; }
+.lesson-covers span {
+  padding: .18rem .4rem; border-radius: 5px; background: var(--panel);
+  font-size: 11.5px; color: var(--ink-soft);
+}
+.lesson-actions { display: flex; align-items: center; gap: .6rem; flex-wrap: wrap; }
+.lesson-sources { font-size: 12px; color: var(--slate-dim); }
+.lesson-sources button {
+  border: 0; background: none; padding: 0; margin-right: .4rem;
+  font-size: 12px; color: var(--accent); text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.mark-done {
+  padding: .35rem .7rem; border: 1px solid var(--rule); border-radius: 7px;
+  background: var(--paper); font-size: 12.5px; font-weight: 500; color: var(--ink-soft);
+}
+.mark-done:hover { border-color: var(--accent); color: var(--accent); }
+.mark-done[data-done="1"] {
+  background: var(--accent); border-color: var(--accent); color: var(--accent-ink);
+}
+
+/* ── learning profile ────────────────────────────────────────── */
+
+.pf-stats { display: flex; gap: .4rem; margin-bottom: .9rem; }
+.pf-stat {
+  flex: 1; padding: .5rem .55rem;
+  border: 1px solid var(--rule); border-radius: 8px; background: var(--paper);
+  display: grid; gap: .1rem;
+  font-size: 11px; color: var(--slate-dim);
+}
+.pf-n { font: 600 1.05rem/1 var(--mono); color: var(--ink); }
+
+.pf-text {
+  max-height: 20rem; overflow-y: auto;
+  margin: 0 0 1rem; padding: .85rem 1rem;
+  border: 1px solid var(--rule); border-radius: 9px; background: var(--panel);
+  font: 400 12.5px/1.6 var(--mono);
+  white-space: pre-wrap; word-break: break-word;
+  color: var(--ink-soft);
+}
+.pf-text[data-empty="1"] {
+  font: 400 13px/1.55 var(--sans); color: var(--slate); background: var(--paper);
+  border-style: dashed;
+}
+
+.goal-picks { display: flex; flex-wrap: wrap; gap: .35rem; margin-top: .5rem; }
+.goal-picks button {
+  padding: .3rem .55rem; border: 1px solid var(--rule); border-radius: 999px;
+  background: var(--paper); font-size: 12px; color: var(--slate);
+}
+.goal-picks button:hover { border-color: var(--accent); color: var(--accent); }
+
+#cb-goal {
+  width: 100%; padding: .5rem .6rem; resize: vertical;
+  border: 1px solid var(--rule); border-radius: 7px; background: var(--paper);
+  font-size: 13.5px; line-height: 1.5;
+}
+#cb-goal:focus { border-color: var(--accent); outline: none; }
 
 .ghost {
   border: 0; background: none; color: var(--slate);
@@ -417,6 +572,26 @@ button { cursor: pointer; }
   font-size: 13.5px; color: #8f3a1e;
 }
 
+.answer-actions { display: flex; gap: .35rem; flex-wrap: wrap; }
+
+.saved {
+  margin-top: .6rem; padding: .5rem .6rem;
+  border: 1px solid #f0e2cf; border-radius: 8px; background: #fdf8f1;
+}
+.saved-head {
+  margin: 0 0 .35rem;
+  font: 600 10.5px/1 var(--sans); letter-spacing: .05em; text-transform: uppercase;
+  color: var(--amber);
+}
+.saved-row { display: flex; gap: .5rem; align-items: baseline; font-size: 12.5px; }
+.saved-row + .saved-row { margin-top: .25rem; }
+.saved-row a {
+  color: var(--ink-soft); text-decoration: underline; text-underline-offset: 2px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.saved-row[data-ok="0"] a { color: var(--slate-dim); text-decoration: line-through; }
+.saved-note { margin-left: auto; flex: none; font: 400 11px var(--mono); color: var(--slate-dim); }
+
 .clicked {
   margin-top: .5rem;
   padding: .25rem .5rem;
@@ -535,6 +710,51 @@ button { cursor: pointer; }
 .switch input { width: 1rem; height: 1rem; accent-color: var(--accent); }
 
 .sheet-foot { margin: 0; font-size: 12.5px; color: var(--slate-dim); min-height: 1rem; }
+
+/* ── first run ───────────────────────────────────────────────────
+   The one screen someone sees before the app does anything, so it carries
+   the wordmark and explains itself rather than opening on a form. */
+
+.welcome { width: min(32rem, calc(100vw - 2rem)); }
+
+.welcome-mark {
+  margin: 0 0 1.5rem;
+  font: 600 13px/1 var(--mono); letter-spacing: -.02em; color: var(--slate);
+}
+.welcome-ext {
+  margin-left: 1px; padding: .18rem .4rem .22rem;
+  border-radius: 5px; background: var(--accent); color: var(--accent-ink);
+}
+
+.steps { margin: 1.5rem 0; padding: 0; list-style: none; display: grid; gap: 1.15rem; }
+.steps li { display: flex; gap: .75rem; align-items: flex-start; }
+.steps p { margin: 0 0 .3rem; font-size: 13.5px; line-height: 1.5; }
+.steps code { font: 400 12px var(--mono); background: var(--panel);
+              padding: .1em .3em; border-radius: 4px; }
+
+.step-n {
+  flex: none;
+  display: grid; place-items: center;
+  width: 1.4rem; height: 1.4rem;
+  border-radius: 50%; background: var(--accent-wash); color: var(--accent);
+  font: 600 11.5px/1 var(--mono);
+}
+.step-link { font-size: 13px; color: var(--accent); text-underline-offset: 2px; }
+.step-aside { color: var(--slate-dim); font-size: 12.5px; }
+
+.welcome-foot {
+  margin: 1.25rem 0 .75rem; padding-top: 1rem;
+  border-top: 1px solid var(--rule-soft);
+  font-size: 12px; line-height: 1.55; color: var(--slate-dim);
+}
+.welcome-foot code { font: 400 11px var(--mono); }
+
+.link-btn {
+  border: 0; background: none; padding: 0;
+  font-size: 12.5px; color: var(--slate); text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.link-btn:hover { color: var(--ink); }
 
 .drop {
   display: grid; place-items: center; gap: .2rem;
