@@ -162,8 +162,14 @@ EOF
   esac
 
   if [ "$ON_PATH" = "0" ]; then
-    shell_rc="${HOME}/.zshrc"
-    [ -n "${BASH_VERSION:-}" ] && shell_rc="${HOME}/.bashrc"
+    # Read the login shell, not the one running this script -- install.sh is
+    # always bash because of its shebang, so BASH_VERSION says nothing about
+    # which rc file the user actually loads.
+    case "$(basename "${SHELL:-/bin/zsh}")" in
+      bash) shell_rc="${HOME}/.bashrc" ;;
+      fish) shell_rc="${HOME}/.config/fish/config.fish" ;;
+      *)    shell_rc="${HOME}/.zshrc" ;;
+    esac
     warn "$BIN_DIR isn't on your PATH. Add it:"
     printf '\n      echo '"'"'export PATH="$HOME/.local/bin:$PATH"'"'"' >> %s\n' "$shell_rc"
     printf '      source %s\n' "$shell_rc"
