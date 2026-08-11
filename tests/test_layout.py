@@ -11,6 +11,7 @@ something this project broke.
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import sys
 import tempfile
@@ -18,7 +19,11 @@ from pathlib import Path
 
 from professor.capture.compile import CompileError, compile_html, find_capture
 from professor.capture.paths import (
+    DEFAULT_LIBRARY_NAME,
+    LIBRARY_NAME,
+    MACHINE_DIR,
     RESERVED_DIRNAMES,
+    TOPIC_SUFFIX,
     USER_REFS_DIR,
     ensure_topic_layout,
     library_root,
@@ -168,6 +173,169 @@ def test_library_root_rejects_source_checkout() -> None:
     check("a plain library is not", not _looks_like_source_checkout(library_root()))
 
 
+def _use_home(scratch: Path, name: str) -> Path:
+    """Make a throwaway $HOME and point the process at it.
+
+    Path.home() reads $HOME on POSIX, so moving the variable moves every caller
+    at once -- including any os.path.expanduser deeper in the code. That keeps
+    these tests off the real filesystem, which matters here more than usual: the
+    thing under test is a path that gets *created* on demand.
+    """
+    home = scratch / name
+    home.mkdir(parents=True, exist_ok=True)
+    os.environ["HOME"] = str(home)
+    os.environ.pop("MFP_LIBRARY", None)
+    return home
+
+
+def _make_library(path: Path) -> Path:
+    """A directory that looks like real material: machinery plus a subject."""
+    (path / MACHINE_DIR).mkdir(parents=True, exist_ok=True)
+    (path / f"py{TOPIC_SUFFIX}").mkdir(exist_ok=True)
+    return path
+
+
+def _make_checkout(path: Path) -> Path:
+    """A directory that looks like this repo."""
+    path.mkdir(parents=True, exist_ok=True)
+    (path / "pyproject.toml").write_text("[project]\nname = 'x'\n", encoding="utf-8")
+    (path / "professor").mkdir(exist_ok=True)
+    return path
+
+
+def test_library_root_resolution(scratch: Path) -> None:
+    """Where a library is found, and what must never be mistaken for one.
+
+    The default moved out of ~/code because on macOS a clone named
+    `my-favorite-professor` IS `~/code/My-Favorite-Professor`, so the installer
+    built the library inside the app's own source. Everything here is a way that
+    could regress: silently relocating someone's existing library is as bad as
+    the original bug.
+    """
+    home = _use_home(scratch, "empty")
+    check("a fresh machine gets the new default",
+          library_root() == home / DEFAULT_LIBRARY_NAME, str(library_root()))
+    check("resolving does not create anything",
+          not (home / DEFAULT_LIBRARY_NAME).exists())
+
+    home = _use_home(scratch, "legacy-code")
+    legacy = _make_library(home / "code" / "My-Favorite-Professor")
+    check("a legacy library in ~/code is still found",
+          library_root() == legacy, str(library_root()))
+
+    home = _use_home(scratch, "legacy-home")
+    legacy = _make_library(home / "My-Favorite-Professor")
+    check("a legacy library in ~ is still found",
+          library_root() == legacy, str(library_root()))
+
+    home = _use_home(scratch, "legacy-topic-only")
+    legacy = home / "Documents" / "My-Favorite-Professor"
+    (legacy / f"sh{TOPIC_SUFFIX}").mkdir(parents=True)
+    check("a subject directory alone is enough to count as a library",
+          library_root() == legacy, str(library_root()))
+
+    home = _use_home(scratch, "legacy-empty")
+    (home / "code" / "My-Favorite-Professor").mkdir(parents=True)
+    check("an empty directory with the right name is not adopted",
+          library_root() == home / DEFAULT_LIBRARY_NAME, str(library_root()))
+
+    # The disaster case: a checkout cloned on top of an old library, which is
+    # the only way both sets of markers appear in one directory. Without the
+    # source-checkout guard this is indistinguishable from material.
+    home = _use_home(scratch, "collided")
+    collided = _make_checkout(home / "code" / "My-Favorite-Professor")
+    _make_library(collided)
+    check("a source checkout is never adopted as a library",
+          library_root() == home / DEFAULT_LIBRARY_NAME, str(library_root()))
+
+    home = _use_home(scratch, "both")
+    current = _make_library(home / DEFAULT_LIBRARY_NAME)
+    _make_library(home / "code" / "My-Favorite-Professor")
+    check("the current default outranks a legacy location",
+          library_root() == current, str(library_root()))
+
+    home = _use_home(scratch, "env")
+    _make_library(home / DEFAULT_LIBRARY_NAME)
+    _make_library(home / "code" / "My-Favorite-Professor")
+    os.environ["MFP_LIBRARY"] = str(home / "elsewhere")
+    check("MFP_LIBRARY wins over everything",
+          library_root() == home / "elsewhere", str(library_root()))
+    os.environ["MFP_LIBRARY"] = "~/tilde-library"
+    check("MFP_LIBRARY expands ~",
+          library_root() == home / "tilde-library", str(library_root()))
+    os.environ.pop("MFP_LIBRARY", None)
+
+
+def test_macos_clone_is_not_the_library(scratch: Path) -> None:
+    """The end-to-end scenario: plain `git clone` then `./install.sh`.
+
+    Reproduces what actually happened -- a checkout at ~/code/my-favorite-professor,
+    which on a case-insensitive filesystem is the old default library path. The
+    library must land somewhere else entirely, with no part of it inside the
+    checkout.
+    """
+    home = _use_home(scratch, "clone")
+    checkout = _make_checkout(home / "code" / "my-favorite-professor")
+
+    root = library_root()
+    check("the library is not the checkout",
+          root.resolve() != checkout.resolve(), f"{root} vs {checkout}")
+    check("the library is not inside the checkout",
+          not root.resolve().is_relative_to(checkout.resolve()), str(root))
+    check("the library is the new default",
+          root == home / DEFAULT_LIBRARY_NAME, str(root))
+
+
+def test_empty_default_does_not_hide_a_real_library(scratch: Path) -> None:
+    """A default directory with nothing in it must not outrank real material.
+
+    The failure this guards is silent and alarming: you open the app and your
+    material is simply gone, with no error, because a stray mkdir or an aborted
+    first run left an empty directory sitting at the winning path.
+    """
+    home = _use_home(scratch, "empty-default-vs-legacy")
+    legacy = _make_library(home / "code" / LIBRARY_NAME)
+
+    check("legacy library is found on its own", library_root() == legacy)
+
+    (home / DEFAULT_LIBRARY_NAME).mkdir()
+    check("an empty default does not hide it", library_root() == legacy,
+          str(library_root()))
+
+    # Once it genuinely holds material it is the right answer.
+    _make_library(home / DEFAULT_LIBRARY_NAME)
+    check("a default with material wins",
+          library_root() == home / DEFAULT_LIBRARY_NAME)
+
+
+def test_environment_beats_the_stored_setting(scratch: Path) -> None:
+    """MFP_LIBRARY outranks the path saved in Settings.
+
+    Both entry points have to agree on this. `mfp -py <url>` resolves through
+    library_root(), which reads the environment, so if the stored setting won
+    inside the app you could save a page from the terminal and then not find it
+    in the reader.
+    """
+    from professor.config import Config
+
+    home = _use_home(scratch, "env-vs-settings")
+    stored = _make_library(home / "from-settings")
+    override = _make_library(home / "from-env")
+
+    config = Config(library=str(stored))
+    check("the stored setting is used when the environment is quiet",
+          config.library_path() == stored)
+    check("and it reports itself as such", config.library_source() == "settings")
+
+    os.environ["MFP_LIBRARY"] = str(override)
+    try:
+        check("the environment wins", config.library_path() == override,
+              str(config.library_path()))
+        check("and the app can say so", config.library_source() == "environment")
+    finally:
+        os.environ.pop("MFP_LIBRARY", None)
+
+
 def test_markdown_renderer() -> None:
     """The renderer must escape, and must not emit live javascript: URLs."""
     html = to_html("# Hi\n\n<script>alert(1)</script>\n\n[x](javascript:alert(1))")
@@ -208,6 +376,11 @@ def test_markdown_renderer() -> None:
 
 def main() -> int:
     root = Path(tempfile.mkdtemp(prefix="mfp-test-"))
+    scratch = Path(tempfile.mkdtemp(prefix="mfp-home-"))
+    # The library tests move $HOME, so they run last and put it back. Anything
+    # earlier that reads the real home -- the mirror path, the config directory
+    # -- then sees the environment it expects.
+    saved_env = {name: os.environ.get(name) for name in ("HOME", "MFP_LIBRARY")}
     try:
         test_find_capture_resolves_nested_note(root)
         test_reserved_dirs_are_not_topics(root)
@@ -216,8 +389,18 @@ def main() -> int:
         test_source_split(root)
         test_library_root_rejects_source_checkout()
         test_markdown_renderer()
+        test_library_root_resolution(scratch)
+        test_macos_clone_is_not_the_library(scratch)
+        test_empty_default_does_not_hide_a_real_library(scratch)
+        test_environment_beats_the_stored_setting(scratch)
     finally:
+        for name, value in saved_env.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
         shutil.rmtree(root, ignore_errors=True)
+        shutil.rmtree(scratch, ignore_errors=True)
 
     print()
     if _failures:

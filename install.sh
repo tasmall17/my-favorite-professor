@@ -52,21 +52,24 @@ printf '%slearn from material you chose, with a Claude that learns how to explai
   "$DIM" "$OFF"
 
 # ---------------------------------------------------------------- collision
-# On macOS the filesystem is case-insensitive, so a checkout at
-# ~/code/my-favorite-professor IS ~/code/My-Favorite-Professor -- the default
-# location of the material library. Installing into your own library is a mess
-# to unpick, so stop before doing any work.
+# The library default no longer lives in ~/code, so cloning under any name is
+# safe now. This remains as a safety net for the one case that is still
+# unrecoverable: a checkout unpacked on top of an existing library, which only
+# happens if someone cloned into ~/code/my-favorite-professor back when that
+# was the default. Installing into your own material is a mess to unpick, so
+# stop before doing any work.
 if [ -d "$REPO/.mfp" ] || ls -d "$REPO"/*-professor >/dev/null 2>&1; then
   die "This checkout is sitting inside a material library.
 
-  That happens on macOS when the repo is cloned as 'my-favorite-professor'
-  next to a library called 'My-Favorite-Professor' -- the filesystem treats
-  those as the same directory.
+  On macOS the filesystem is case-insensitive, so a clone at
+  'my-favorite-professor' lands in an older library called
+  'My-Favorite-Professor' -- the same directory as far as the disk is
+  concerned. Your material is fine; the checkout is in the wrong place.
 
-  Move the checkout somewhere else and run this again:
+  Clone somewhere that isn't next to that library and run this again, e.g.:
 
-      cd .. && mv my-favorite-professor my-favorite-professor-app
-      cd my-favorite-professor-app && ./install.sh"
+      cd ~ && git clone https://github.com/tasmall17/my-favorite-professor.git
+      cd my-favorite-professor && ./install.sh"
 fi
 
 # ------------------------------------------------------------------- python

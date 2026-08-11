@@ -773,7 +773,14 @@ function renderSettings() {
   const settings = state.settings;
   $("#avatar-initials").textContent = settings.initials || "··";
   $("#initials").value = settings.initials || "";
-  $("#lib-hint").textContent = settings.library || "";
+  const hint = $("#lib-hint");
+  hint.textContent = settings.library || "";
+  // Say when the environment is overriding Settings, rather than showing a
+  // stored path that isn't the one in use.
+  hint.title = settings.library_source === "environment"
+    ? `${settings.library}  (from MFP_LIBRARY, overriding Settings)`
+    : settings.library || "";
+  hint.dataset.source = settings.library_source || "default";
   $("#mirror-path").textContent = settings.mirror_path;
   $("#mirror-toggle").checked = settings.mirror_to_downloads !== false;
   $("#web-toggle").checked = !!settings.web_supplements;

@@ -14,13 +14,27 @@ from pathlib import Path
 
 LIBRARY_NAME = "My-Favorite-Professor"
 
-# Where to look for an existing library, in order. The original tool hardcoded
-# ~/Code, which resolves only because macOS is case-insensitive -- on Linux it
-# simply misses a library sitting in ~/code. Both spellings are checked so the
-# same default works on either filesystem.
-_LIBRARY_PARENTS = ("code", "Code", "Documents")
+# Where a *new* library goes. The old default was ~/code/My-Favorite-Professor,
+# which is unusable on macOS: the filesystem is case-insensitive, so a repo
+# cloned as ~/code/my-favorite-professor is literally that same directory, and
+# `git clone` followed by `./install.sh` built the library inside the app's own
+# source. This name is immune -- nothing is ever cloned as
+# `my-favorite-professor-library`. It stays visible in $HOME rather than hiding
+# in a dotdir because the whole point of the material is that you can browse it,
+# copy it, and take it elsewhere.
+DEFAULT_LIBRARY_NAME = "my-favorite-professor-library"
 
-DEFAULT_LIBRARY = Path.home() / "code" / LIBRARY_NAME
+# Libraries created by earlier versions, newest guess first. Checked only when
+# the current default is absent, and adopted only if the directory really holds
+# material -- ~/code/My-Favorite-Professor is exactly where a macOS checkout
+# lands, so "the directory exists" says nothing about what's in it. Both
+# spellings of code/Code are listed because only macOS conflates them.
+_LEGACY_LIBRARIES = (
+    ("code", LIBRARY_NAME),
+    ("Code", LIBRARY_NAME),
+    ("Documents", LIBRARY_NAME),
+    (LIBRARY_NAME,),
+)
 
 # The single hidden directory holding all cross-topic machinery.
 MACHINE_DIR = ".mfp"
@@ -67,17 +81,68 @@ def _looks_like_source_checkout(path: Path) -> bool:
     return (path / "pyproject.toml").is_file() and (path / "professor").is_dir()
 
 
+def _looks_like_library(path: Path) -> bool:
+    """Does this directory actually hold material, or does it just have the name?
+
+    An empty ~/code/My-Favorite-Professor proves nothing: on macOS that path is
+    created by the mere act of cloning the repo. Requiring the machine directory
+    or at least one subject means a legacy location is only adopted when there
+    is something there worth adopting.
+    """
+    if (path / MACHINE_DIR).is_dir():
+        return True
+    try:
+        return any(child.is_dir() for child in path.glob(f"*{TOPIC_SUFFIX}"))
+    except OSError:
+        # Nearly every code path calls library_root(); an unreadable candidate
+        # should cost us one guess, not the whole process.
+        return False
+
+
+def default_library() -> Path:
+    """Where a library is created when there isn't one yet.
+
+    Resolved on each call rather than frozen at import so that $HOME is read
+    when it matters -- tests and anything running under a different user.
+    """
+    return Path.home() / DEFAULT_LIBRARY_NAME
+
+
 def library_root() -> Path:
-    """The library directory. MFP_LIBRARY overrides everything else."""
+    """The library directory. MFP_LIBRARY overrides everything.
+
+    Order: the environment, then the current default *if it holds material*,
+    then any legacy location that does, then the current default again as the
+    place to create one. Existing libraries keep working without being moved;
+    new ones land somewhere a checkout can never collide with.
+
+    Both the "holds material" gates matter. Requiring content rather than mere
+    existence is what stops an empty directory from hiding a real library, and
+    rejecting a source checkout is what stops the app adopting itself when a
+    clone and a library have folded onto the same inode.
+    """
     env = os.environ.get("MFP_LIBRARY", "").strip()
     if env:
         return Path(env).expanduser()
 
-    for parent in _LIBRARY_PARENTS:
-        candidate = Path.home() / parent / LIBRARY_NAME
-        if candidate.is_dir() and not _looks_like_source_checkout(candidate):
+    # The default has to hold material to win, not merely exist. An empty
+    # directory of that name -- a stray mkdir, an aborted first run, a typo in
+    # --library -- would otherwise outrank a real library in a legacy location
+    # and silently present someone with an empty app instead of their material.
+    default = default_library()
+    if default.is_dir() and _looks_like_library(default):
+        return default
+
+    home = Path.home()
+    for parts in _LEGACY_LIBRARIES:
+        candidate = home.joinpath(*parts)
+        if (
+            candidate.is_dir()
+            and _looks_like_library(candidate)
+            and not _looks_like_source_checkout(candidate)
+        ):
             return candidate
-    return DEFAULT_LIBRARY
+    return default
 
 
 def machine_dir(root: Path | None = None) -> Path:

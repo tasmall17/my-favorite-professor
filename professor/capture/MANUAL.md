@@ -185,7 +185,7 @@ Every decision is printed, so a wrong one is visible immediately.
 ## OUTPUT LAYOUT
 
 ```
-~/Code/My-Favorite-Professor/
+~/my-favorite-professor-library/
    .mfp/                                  machinery, hidden
       topics.json                         alias dictionary
       audit.log                           what happened, and when
@@ -309,14 +309,15 @@ dimension is dropped as an icon or tracking pixel. Capped at 150 images and
 ## ENVIRONMENT
 
 `MFP_LIBRARY`
-: Library root. Default `~/Code/My-Favorite-Professor`. `--library` overrides
+: Library root. Default `~/my-favorite-professor-library`, or an existing
+  library found in an older location. `--library` overrides
   it for one run.
 
 ## FILES
 
 | Path | Purpose |
 |---|---|
-| `~/Code/My-Favorite-Professor/` | Library root |
+| `~/my-favorite-professor-library/` | Library root (default) |
 | `.mfp/topics.json` | Alias dictionary. Rebuildable — disk is authoritative |
 | `.mfp/audit.log` | Append-only action log |
 | `.mfp/failed-attempts.csv` | Failed captures |

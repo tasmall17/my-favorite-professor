@@ -25,8 +25,8 @@ Nothing here is subject-specific. Upload references, get a course.
 ## Install
 
 ```sh
-git clone https://github.com/tasmall17/my-favorite-professor.git my-favorite-professor-app
-cd my-favorite-professor-app
+git clone https://github.com/tasmall17/my-favorite-professor.git
+cd my-favorite-professor
 ./install.sh
 ```
 
@@ -54,11 +54,11 @@ PyPI.
 **"command not found: my-favorite-professor"** — `~/.local/bin` isn't on your
 PATH. The installer tells you the line to add; add it and reopen your terminal.
 
-**It says the checkout is inside a material library** — you're on macOS and
-cloned it as `my-favorite-professor`, next to a library called
-`My-Favorite-Professor`. The filesystem treats those as the *same directory*.
-Rename the checkout (`mv my-favorite-professor my-favorite-professor-app`) and
-run it again.
+**It says the checkout is inside a material library** — only possible if you
+cloned into a directory that already held material from an older version, on
+macOS, where `my-favorite-professor` and `My-Favorite-Professor` are the *same
+directory*. Delete the checkout — your material is untouched — and clone it
+somewhere else, such as your home directory.
 
 **Python 3.12+ not found** — `brew install python@3.12` on macOS,
 `sudo apt install python3.12 python3.12-venv` on Debian/Ubuntu.
@@ -162,7 +162,7 @@ Claude went and found.
 Three separate places, deliberately. None of them is inside this repo.
 
 ```
-~/code/My-Favorite-Professor/        your material
+~/my-favorite-professor-library/     your material
   py-professor/
     usr-references-provided/         what you chose
     claude-references-provided/      what Claude fetched to fill a gap
@@ -187,6 +187,12 @@ Downloads copies are self-contained HTML — double-click them, read them on a
 plane, mail them to someone. Filenames carry the capture's content hash so
 re-saving a page overwrites cleanly and two pages that share a title can't
 clobber each other.
+
+**Already have a library?** Earlier versions kept it in
+`~/code/My-Favorite-Professor`, `~/Documents/My-Favorite-Professor` or
+`~/My-Favorite-Professor`. Those are still found automatically, so there is
+nothing to move — a directory is only adopted if it actually contains material,
+never just because it has the right name.
 
 Set `MFP_LIBRARY` to put your material somewhere else.
 
@@ -229,13 +235,12 @@ disappears when you pick Haiku rather than silently doing nothing.
 
 ## Note for macOS
 
-Don't clone this repo as `~/code/my-favorite-professor` next to a library at
-`~/code/My-Favorite-Professor`. The filesystem is case-insensitive, so those are
-the *same directory*, and you'll end up with the app's source inside your
-material. The app detects and refuses to treat a source checkout as a library,
-but the tidy fix is to keep the two apart — clone it as
-`my-favorite-professor-app`, as the install command above does, or put it
-anywhere outside `~/code`.
+The library is called `my-favorite-professor-library`, not
+`My-Favorite-Professor`, for one reason: the macOS filesystem is
+case-insensitive, so a repo cloned as `my-favorite-professor` *is* a directory
+called `My-Favorite-Professor`, and the old default put your material inside the
+app's own source. Clone this wherever you like — the two names can no longer
+land on the same directory.
 
 This is not hypothetical. It happened while building the app.
 

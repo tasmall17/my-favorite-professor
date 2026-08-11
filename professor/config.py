@@ -189,11 +189,31 @@ class Config:
         return bool(self.resolve_key())
 
     def library_path(self) -> Path:
+        """Where this run reads and writes material.
+
+        MFP_LIBRARY comes first, ahead of the path set in Settings. The two
+        entry points have to agree: `mfp -py <url>` resolves through
+        library_root(), which honours the environment, so if Settings won here
+        then capturing a page and reading it in the app could use different
+        libraries -- a page saved and then apparently missing. An environment
+        variable is also the conventional way to override a stored setting for
+        one invocation, rather than the other way round.
+
+        `library_source()` reports which of the two is in play, so the app can
+        say so rather than leaving a Settings value silently ignored.
+        """
         from .capture.paths import library_root
 
+        if os.environ.get("MFP_LIBRARY", "").strip():
+            return library_root()
         if self.library.strip():
             return Path(self.library).expanduser()
         return library_root()
+
+    def library_source(self) -> str:
+        if os.environ.get("MFP_LIBRARY", "").strip():
+            return "environment"
+        return "settings" if self.library.strip() else "default"
 
     def public(self) -> dict[str, Any]:
         """Everything the browser is allowed to know. Note the absent key."""
@@ -203,6 +223,7 @@ class Config:
             "model": self.model,
             "effort": self.effort,
             "library": str(self.library_path()),
+            "library_source": self.library_source(),
             "mirror_to_downloads": self.mirror_to_downloads,
             "mirror_path": str(DOWNLOADS_MIRROR),
             "web_supplements": self.web_supplements,
