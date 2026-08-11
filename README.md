@@ -24,48 +24,84 @@ Nothing here is subject-specific. Upload references, get a course.
 
 ## Install
 
-Needs Python 3.12+ and an [Anthropic API key](https://console.anthropic.com/).
-
 ```sh
-# The -app suffix matters on macOS -- see the note at the bottom.
 git clone https://github.com/tasmall17/my-favorite-professor.git my-favorite-professor-app
 cd my-favorite-professor-app
-uv tool install --editable . --with patchright
-playwright install chromium          # only needed for capturing web pages
+./install.sh
+```
+
+That's it. The installer builds a self-contained environment, puts `mfp` and
+`my-favorite-professor` on your PATH, and opens the app in your browser. The
+first screen walks you through getting an API key.
+
+<details>
+<summary>What it actually does, and what to do if something goes wrong</summary>
+
+<br>
+
+It finds a Python 3.12+, creates `.venv` inside the checkout, installs the
+dependencies (including a headless Chromium used for saving web pages and
+making PDFs), and writes two small launcher scripts into `~/.local/bin`.
+Nothing is installed system-wide and nothing is downloaded from anywhere but
+PyPI.
+
+| Flag | |
+|---|---|
+| `--no-launch` | Set up, but don't open the app afterwards |
+| `--no-shims` | Don't touch `~/.local/bin`; run `.venv/bin/mfp` directly |
+| `--force` | Replace an existing `mfp` command without asking |
+
+**"command not found: my-favorite-professor"** — `~/.local/bin` isn't on your
+PATH. The installer tells you the line to add; add it and reopen your terminal.
+
+**It says the checkout is inside a material library** — you're on macOS and
+cloned it as `my-favorite-professor`, next to a library called
+`My-Favorite-Professor`. The filesystem treats those as the *same directory*.
+Rename the checkout (`mv my-favorite-professor my-favorite-professor-app`) and
+run it again.
+
+**Python 3.12+ not found** — `brew install python@3.12` on macOS,
+`sudo apt install python3.12 python3.12-venv` on Debian/Ubuntu.
+
+**No `install.sh`?** The manual equivalent:
+
+```sh
+python3 -m venv .venv && .venv/bin/pip install -e . && .venv/bin/playwright install chromium
+.venv/bin/my-favorite-professor serve
 ```
 
 Tested on Python 3.12 and 3.14.
 
-Then:
-
-```sh
-my-favorite-professor serve
-```
-
-It opens in your browser. Paste your API key into Settings on first run.
-
-> `mfp` is installed as a shorter alias for the same command.
+</details>
 
 ---
 
-## The two ways material gets in
+## Using it
 
-**Upload**, from Settings → Upload materials. `.md`, `.txt`, `.pdf`.
+```sh
+my-favorite-professor serve     # open the app
+```
 
-**Capture**, from the command line, while you're reading something:
+**Add material** from the menu (top right) → *Add materials*: `.md`, `.txt` or
+`.pdf`.
+
+**Or save a page while you're reading it**, from the terminal:
 
 ```sh
 mfp -py https://realpython.com/primer-on-python-decorators/
+mfp -sh https://zsh.sourceforge.io/Guide/
 ```
 
 Topic flags are invented on the spot — `-py` files into `py-professor/`, and
 typing `-python` later lands in the same place rather than making a second
-directory. The full capture manual is in
+directory. `mfp --topics` shows what you have. The full capture reference is in
 [`professor/capture/MANUAL.md`](professor/capture/MANUAL.md).
 
-Either way you get the same thing: a readable Markdown note, plus a hidden
-archive holding the page with its images normalised and inlined, so the
+Either route gives you the same thing: a readable Markdown note, plus a hidden
+archive holding the page with its images normalised and inlined, so your
 material still works offline and Claude can actually see the figures.
+
+Then press **Build the course**, and start reading.
 
 ---
 
