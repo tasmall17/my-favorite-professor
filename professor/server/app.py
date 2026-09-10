@@ -115,7 +115,8 @@ def create_app() -> FastAPI:
         root = _root()
         resolution = TopicRegistry(root).resolve(name)
         return JSONResponse({
-            "topic": library.read_topic(resolution.directory).public(),
+            "topic": library.read_topic(resolution.directory,
+                                        resolution.label).public(),
             "action": resolution.action,
             "matched": resolution.matched_topic,
         })
@@ -127,13 +128,19 @@ def create_app() -> FastAPI:
             raise HTTPException(404, "no such note")
         return JSONResponse(library.note_document(note))
 
-    @app.get("/api/asset/{topic}/{slug}/{name}")
+    @app.get("/api/asset/{topic:path}/{slug}/{name}")
     def get_asset(topic: str, slug: str, name: str) -> FileResponse:
         """Serve an image out of a capture's archive.
 
         Every component is checked against the resolved library path -- these
         come from note text, which for `claude-references-provided` material
         originated on the open web.
+
+        `topic` is a :path parameter because a subtopic's is two segments. The
+        converter is greedy but the two segments after it are not, so the match
+        backtracks to leave exactly slug and name -- and widening it changes
+        nothing about safety here, which rests on the containment check below
+        rather than on the shape of the pattern.
         """
         root = _root().resolve()
         path = (root / topic / CAPTURES_DIR / slug / "assets" / name).resolve()
@@ -163,7 +170,7 @@ def create_app() -> FastAPI:
                 data=data,
                 filename=file.filename or "upload.txt",
                 topic_dir=resolution.directory,
-                topic=resolution.directory.name,
+                topic=resolution.label,
             )
         except IngestError as exc:
             raise HTTPException(400, str(exc))
@@ -172,21 +179,21 @@ def create_app() -> FastAPI:
         mirror_error: str | None = None
         if config.mirror_to_downloads:
             prune_stale(title=result.title, capture_dir=result.capture_dir,
-                        topic=resolution.directory.name)
+                        topic=resolution.label)
             outcome = mirror_capture(
                 capture_dir=result.capture_dir, note_path=result.note_path,
-                title=result.title, topic=resolution.directory.name,
+                title=result.title, topic=resolution.label,
             )
             mirrored = str(outcome.page or outcome.note or "")
             mirror_error = outcome.error
 
         note = library.resolve_note(
-            root, library.note_id(resolution.directory.name, result.source,
+            root, library.note_id(resolution.label, result.source,
                                   result.note_path.name),
         )
         return JSONResponse({
             "note": note.public() if note else None,
-            "topic": resolution.directory.name,
+            "topic": resolution.label,
             "title": result.title,
             "words": result.word_count,
             "images": result.assets_kept,

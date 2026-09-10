@@ -72,6 +72,10 @@ def note_id(topic: str, source: str, filename: str) -> str:
 
     Built from the three things that locate it rather than stored anywhere, so
     it survives the library being moved and never needs migrating.
+
+    `topic` is the topic's path within the library, so for a subtopic it holds
+    a slash of its own ('js-professor/react'). That makes the id four segments
+    rather than three, which is why resolve_note() splits from the right.
     """
     return f"{topic}/{source}/{quote(filename)}"
 
@@ -95,8 +99,15 @@ def _manifests(topic_dir: Path) -> dict[str, dict]:
     return found
 
 
-def read_topic(topic_dir: Path) -> Topic:
-    topic = Topic(name=topic_dir.name, stem=stem(topic_dir.name))
+def read_topic(topic_dir: Path, label: str | None = None) -> Topic:
+    """Read one topic directory. `label` is its path within the library.
+
+    A subtopic needs the nested label ('js-professor/react') because note ids
+    are built from it: two subtopics of different parents can hold notes with
+    the same filename, and a bare leaf name would give them the same id.
+    """
+    label = label or topic_dir.name
+    topic = Topic(name=label, stem=stem(topic_dir.name))
     manifests = _manifests(topic_dir)
 
     for source, dirname in (("user", USER_REFS_DIR), ("claude", CLAUDE_REFS_DIR)):
@@ -106,9 +117,9 @@ def read_topic(topic_dir: Path) -> Topic:
         for path in sorted(directory.glob("*.md")):
             manifest = manifests.get(path.name, {})
             topic.notes.append(Note(
-                id=note_id(topic_dir.name, source, path.name),
+                id=note_id(label, source, path.name),
                 title=manifest.get("title") or path.stem,
-                topic=topic_dir.name,
+                topic=label,
                 source=source,
                 path=path,
                 words=int(manifest.get("word_count") or 0),
@@ -120,7 +131,7 @@ def read_topic(topic_dir: Path) -> Topic:
     for path in sorted(topic_dir.glob("*.md")):
         manifest = manifests.get(path.name, {})
         topic.notes.append(Note(
-            id=note_id(topic_dir.name, "user", path.name),
+            id=note_id(label, "user", path.name),
             title=manifest.get("title") or path.stem,
             topic=topic_dir.name,
             source="user",
@@ -134,10 +145,16 @@ def read_topic(topic_dir: Path) -> Topic:
 
 
 def list_topics(root: Path) -> list[Topic]:
+    """Every topic in the library, each subtopic following its parent."""
     from .capture.topics import TopicRegistry
 
     registry = TopicRegistry(root)
-    return [read_topic(d) for d in registry.topic_dirs()]
+    topics: list[Topic] = []
+    for directory in registry.topic_dirs():
+        topics.append(read_topic(directory))
+        for sub_dir in registry.subtopic_dirs(directory):
+            topics.append(read_topic(sub_dir, f"{directory.name}/{sub_dir.name}"))
+    return topics
 
 
 def resolve_note(root: Path, identifier: str) -> Note | None:
@@ -147,7 +164,10 @@ def resolve_note(root: Path, identifier: str) -> Note | None:
     the topic directory before anything is read -- a `..` in the filename must
     not be able to walk out of the library.
     """
-    parts = identifier.split("/")
+    # From the right: the last two segments are always source and filename,
+    # and everything before them is the topic path -- which is one segment for
+    # a topic and two for a subtopic.
+    parts = identifier.rsplit("/", 2)
     if len(parts) != 3:
         return None
     topic_name, source, filename = parts[0], parts[1], unquote(parts[2])

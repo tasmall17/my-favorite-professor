@@ -17,6 +17,7 @@ import tempfile
 from pathlib import Path
 
 from professor.capture.compile import CompileError, compile_html, find_capture
+from professor import library as lib
 from professor.capture.paths import (
     RESERVED_DIRNAMES,
     USER_REFS_DIR,
@@ -204,6 +205,123 @@ def test_markdown_renderer() -> None:
     check("tables render", "<table>" in table and "<td>1</td>" in table)
 
 
+def test_subtopics(root: Path) -> None:
+    """A dotted flag nests one level, and only one level.
+
+    The dot is load-bearing in a way that is easy to regress: slugify() turns
+    it into a hyphen, so anything that normalises the flag before splitting it
+    produces a single top-level 'js-react-professor' -- a plausible directory
+    that silently is not nesting. The first check here is what catches that.
+    """
+    print("\n  subtopics")
+    library = root / "subtopics"
+    registry = TopicRegistry(library)
+
+    parent = registry.resolve("js")
+    child = registry.resolve("js.react")
+
+    check("a dotted flag nests rather than making one flat topic",
+          child.directory.parent == parent.directory,
+          child.directory.relative_to(library).as_posix())
+    check("the subtopic carries no -professor suffix",
+          child.directory.name == "react", child.directory.name)
+    check("the nested label is what identifies it",
+          child.label == "js-professor/react", child.label)
+    check("a subtopic gets the full topic layout",
+          all((child.directory / d).is_dir()
+              for d in (".captures", USER_REFS_DIR, "claude-references-provided")))
+
+    # The funnel has to work at the second level too, or every abbreviation
+    # spawns a duplicate directory -- the exact problem it exists to prevent.
+    again = registry.resolve("js.rea")
+    check("an abbreviated subtopic binds to the existing one",
+          again.directory == child.directory, again.action)
+    sibling = registry.resolve("js.async")
+    check("an unrelated subtopic gets its own directory",
+          sibling.directory != child.directory
+          and sibling.directory.parent == parent.directory)
+    check("the parent is reused, never duplicated",
+          len([d for d in library.iterdir() if d.is_dir()
+               and not d.name.startswith(".")]) == 1)
+
+    # Nesting stops at one level: the layout has two, and a third would put
+    # captures where find_capture() cannot see them.
+    deep = registry.resolve("js.a.b")
+    check("a second dot does not create a third level",
+          deep.directory.parent == parent.directory, deep.directory.name)
+
+    check("subtopic aliases survive a rebuild from disk",
+          (registry.rebuild() or TopicRegistry(library).resolve("js.react").directory)
+          == child.directory)
+
+    fresh = TopicRegistry(library)
+    check("a hand-made subtopic directory is adopted",
+          "js.async" in fresh._aliases, str(sorted(fresh._aliases)))
+
+    # --new-topic on a dotted flag must force the *subtopic* only. Forcing the
+    # parent too answers "-jsx.react", with js-professor already there, by
+    # building a second jsx-professor/ to put it in. 'jsx' has to be a genuine
+    # prefix of 'js' for this to discriminate -- an alias the funnel would not
+    # have bound anyway proves nothing about what force_new did.
+    forced = registry.resolve("jsx.react", force_new=True)
+    check("--new-topic on a subtopic does not duplicate the parent",
+          forced.directory.parent == parent.directory,
+          forced.directory.parent.name)
+    check("still exactly one professor after forcing",
+          len([d for d in library.iterdir() if d.is_dir()
+               and not d.name.startswith(".")]) == 1)
+
+
+def test_subtopic_notes_are_distinct(root: Path) -> None:
+    """Two notes of the same name, one per level, must not collapse.
+
+    Note ids are built from the topic label, so a subtopic that reported a bare
+    'react' would give its notes the same id as a sibling subtopic's -- and the
+    reading pane would serve whichever it found first.
+    """
+    print("\n  subtopic notes")
+    library = root / "subnotes"
+    registry = TopicRegistry(library)
+    parent = registry.resolve("js")
+    child = registry.resolve("js.react")
+
+    a = ingest_file(data=sample_markdown(), filename="Same.md",
+                    topic_dir=parent.directory, topic=parent.label)
+    b = ingest_file(data=sample_markdown(), filename="Same.md",
+                    topic_dir=child.directory, topic=child.label)
+
+    check("the subtopic note lands under its own directory",
+          b.note_path.parent.parent == child.directory,
+          b.note_path.relative_to(library).as_posix())
+
+    manifest = json.loads((b.capture_dir / "manifest.json").read_text())
+    check("the manifest records the nested topic",
+          manifest["topic"] == "js-professor/react", manifest["topic"])
+
+    topics = {t.name for t in lib.list_topics(library)}
+    check("the subtopic is listed as a topic of its own",
+          "js-professor/react" in topics, str(sorted(topics)))
+
+    ids = [n.id for t in lib.list_topics(library) for n in t.notes]
+    check("same-named notes at two levels get distinct ids",
+          len(set(ids)) == len(ids) == 2, str(ids))
+    # resolve() on both sides: resolve_note() returns a resolved path, and on
+    # macOS the temp root arrives via the /var -> /private/var symlink.
+    check("every id resolves back to its own file",
+          {lib.resolve_note(library, i).path.resolve() for i in ids} ==
+          {a.note_path.resolve(), b.note_path.resolve()})
+
+    # The id gained a variable number of segments; the containment check that
+    # keeps a crafted id inside the library has to survive that.
+    walks = ["../../etc/user/passwd.md", "js-professor/../../user/x.md",
+             "js-professor/react/admin/Same.md"]
+    check("a crafted note id still cannot walk out of the library",
+          all(lib.resolve_note(library, w) is None for w in walks))
+
+    check("find_capture reaches a capture nested two levels down",
+          find_capture(str(b.note_path), library) == b.capture_dir.resolve())
+
+
 # ---------------------------------------------------------------------- main
 
 def main() -> int:
@@ -214,6 +332,8 @@ def main() -> int:
         test_compile_is_offline_and_self_contained(root)
         test_topic_layout_created(root)
         test_source_split(root)
+        test_subtopics(root)
+        test_subtopic_notes_are_distinct(root)
         test_library_root_rejects_source_checkout()
         test_markdown_renderer()
     finally:

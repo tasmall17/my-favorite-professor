@@ -131,10 +131,15 @@ them (see **TOPIC FLAGS**).
 Topics are invented at the call site. There is no list to maintain.
 
 ```
-mfp -py    URL      →  py-professor/
-mfp -rust  URL      →  rust-professor/
-mfp        URL      →  inbox/
+mfp -py        URL  →  py-professor/
+mfp -rust      URL  →  rust-professor/
+mfp -py.async  URL  →  py-professor/async/
+mfp            URL  →  inbox/
 ```
+
+An alias can be any length — `-py`, `-pyt` and `-python` all reach the same
+professor. A dot nests one level, for a subject that belongs *under* a
+professor rather than beside it.
 
 If the topic does not exist it is created. If it does, the capture is added to
 it. The interesting case is the near-miss: you have `py-professor/` with three
@@ -150,6 +155,23 @@ This does **not** create a second directory. It reports
 topic: 'python' -> existing py-professor/  (use --new-topic to separate)
 ```
 
+### Subtopics
+
+`-py.async` files into `py-professor/async/`. The subtopic is a separate
+subject with the same four directories a topic has — its own notes, its own
+`.captures/`, its own syllabus — sitting inside the professor it belongs to.
+
+Nesting stops at one level. A second dot is read as part of the subtopic's
+name rather than a grandchild, because the layout has exactly two levels and
+a third would file captures where `--compile` cannot find them.
+
+Everything true of topics is true of subtopics. `-py.asy` binds to an
+existing `async/` by the same rules below, the binding is written back as the
+dotted key `py.async`, and a directory you create by hand with `mkdir` is
+adopted on the next run. `--new-topic` applies to the subtopic alone, so
+`mfp --new-topic -py.async URL` makes a second `async/` under the *existing*
+professor rather than a second professor.
+
 ### How the matching works
 
 `.mfp/topics.json` is a dictionary of alias → directory. Resolution is
@@ -160,6 +182,9 @@ topic: 'python' -> existing py-professor/  (use --new-topic to separate)
    candidate, then bind if either stem is a prefix of the other (minimum
    length 2), or if their similarity ratio is at least 0.72.
 3. **No match.** Create `TOPIC-professor/` and register the alias.
+
+For a dotted flag this runs twice: once for the professor, then again over
+that professor's subtopics. Only the parent carries the `-professor` suffix.
 
 Whatever step 2 or 3 decides is **written back into the dictionary**, so the
 expensive comparison runs once per new alias ever; every later use is a plain
@@ -198,6 +223,9 @@ Every decision is printed, so a wrong one is visible immediately.
             assets/                       images, normalised
             manifest.json                 url, title, tier, asset map
             original.html                 raw DOM, to re-extract offline
+      async/                              a subtopic: mfp -py.async URL
+         Asyncio Event Loops.md           its own notes
+         .captures/                       its own archive
 ```
 
 The note carries Obsidian-style YAML frontmatter (`title`, `url`, `site`,

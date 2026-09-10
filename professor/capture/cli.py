@@ -1,6 +1,7 @@
 """Command line entry point, exposed as both `mfp` and `my-fav-professor`.
 
     mfp -py https://realpython.com/decorators     # topic flags, invented on the spot
+    mfp -py.async https://.../asyncio             # a subtopic inside py-professor
     mfp https://example.com/article               # no flag -> inbox
 
 Topic flags are the interesting part. argparse cannot accept arbitrary unknown
@@ -32,7 +33,10 @@ RESERVED = {
     "-n", "--new",
 }
 
-FLAG_RE = re.compile(r"^--?[A-Za-z][\w-]*$")
+# The dot is what separates a topic from a subtopic, so it has to survive the
+# scan that picks the topic token out of argv. Nothing else in the grammar uses
+# it, and no reserved flag contains one, so admitting it here is unambiguous.
+FLAG_RE = re.compile(r"^--?[A-Za-z][\w.-]*$")
 
 # Width of the label column in status output. Sized for the longest label
 # ("updated:") so paths line up across every message.
@@ -72,7 +76,10 @@ def build_parser() -> argparse.ArgumentParser:
         ),
         epilog=(
             "Topic flags are invented on the spot: `mfp -py <url>` files into "
-            "py-professor/. Type -python later and it lands in the same place."
+            "py-professor/. Type -python later and it lands in the same place. "
+            "A dot nests one level: `mfp -py.async <url>` files into "
+            "py-professor/async/, which is a separate subject under the same "
+            "professor."
         ),
     )
     parser.add_argument("target", nargs="?", help="URL to capture")
@@ -159,12 +166,20 @@ def do_capture(url: str, topic_flag: str | None, args, root: Path) -> int:
     alias = topic_flag or INBOX_TOPIC
     resolution = registry.resolve(alias, force_new=args.new_topic)
 
+    # A first `-js.react` can create two directories. Reporting only the leaf
+    # would leave the new parent unmentioned, and the parent is the one the
+    # user has to live with if the funnel guessed its name wrong.
+    if resolution.is_subtopic and resolution.parent_action == "created":
+        journal.audit_create(resolution.parent, resolution.alias.split(".")[0], root=root)
+        if not args.quiet:
+            print(f"  topic: created {resolution.parent.name}/")
+
     if not args.quiet:
         if resolution.action == "created":
-            print(f"  topic: created {resolution.directory.name}/")
+            print(f"  topic: created {resolution.label}/")
         elif resolution.action == "bound":
             print(f"  topic: '{resolution.alias}' -> existing "
-                  f"{resolution.directory.name}/  (use --new-topic to separate)")
+                  f"{resolution.label}/  (use --new-topic to separate)")
 
     if resolution.action == "created":
         journal.audit_create(resolution.directory, resolution.alias, root=root)
@@ -183,17 +198,21 @@ def do_capture(url: str, topic_flag: str | None, args, root: Path) -> int:
         print(f"  logged to {journal.failures_file(root)}", file=sys.stderr)
         return 1
 
+    # topic_dir is the leaf, and a subtopic directory has the identical layout
+    # a topic does -- which is why nesting needs nothing from the capture layer.
+    # The *label* is the nested one, so the manifest and the mirror can tell a
+    # subtopic note apart from a parent note of the same name.
     capture = write_capture(
         result,
         topic_dir=resolution.directory,
-        topic=resolution.directory.name,
+        topic=resolution.label,
         original_url=url,
         quiet=args.quiet,
     )
     journal.audit_saved(url, capture.note_path, capture.tier,
                         updated=capture.updated, root=root)
 
-    mirrored = _mirror(capture, resolution.directory.name, quiet=args.quiet)
+    mirrored = _mirror(capture, resolution.label, quiet=args.quiet)
 
     if not args.quiet:
         verb = "updated" if capture.updated else "saved"
@@ -221,6 +240,7 @@ def do_new_topic(name: str, root: Path, *, force: bool = False) -> int:
 
         mfp -n python                 create python-professor/
         mfp -py <url>                 lands there ('py' matches 'python')
+        mfp -n python.async           create python-professor/async/
 
     Deliberately funnel-aware. Creating the directory blindly would let
     `mfp -n python` sit a fresh python-professor/ next to an existing
@@ -233,22 +253,26 @@ def do_new_topic(name: str, root: Path, *, force: bool = False) -> int:
 
     where = resolution.directory.resolve()
 
+    if resolution.is_subtopic and resolution.parent_action == "created":
+        journal.audit_create(resolution.parent, resolution.alias.split(".")[0], root=root)
+        print(f"  {'created:':<{_LABEL_W}}{resolution.parent.name}/")
+
     if resolution.action == "created":
         journal.audit_create(resolution.directory, resolution.alias, root=root)
-        print(f"  {'created:':<{_LABEL_W}}{resolution.directory.name}/")
+        print(f"  {'created:':<{_LABEL_W}}{resolution.label}/")
         print(f"  {'dir:':<{_LABEL_W}}{where}")
         print(f"  {'now:':<{_LABEL_W}}mfp -{resolution.alias} <url>")
         return 0
 
     if resolution.action == "bound":
         journal.audit_link(resolution.alias, resolution.directory, root=root)
-        print(f"  '{resolution.alias}' already covered by {resolution.directory.name}/")
+        print(f"  '{resolution.alias}' already covered by {resolution.label}/")
         print(f"  {'dir:':<{_LABEL_W}}{where}")
         print(f"  captures with -{resolution.alias} will land there.")
         print("  use --new-topic to make a separate directory anyway.")
         return 0
 
-    print(f"  {resolution.directory.name}/ already exists")
+    print(f"  {resolution.label}/ already exists")
     print(f"  {'dir:':<{_LABEL_W}}{where}")
     print(f"  {'use:':<{_LABEL_W}}mfp -{resolution.alias} <url>")
     return 0
@@ -260,10 +284,11 @@ def do_topics(root: Path) -> int:
     if not rows:
         print("No topics yet. Try:  mfp -py https://realpython.com/decorators")
         return 0
-    width = max(len(name) for name, _, _ in rows)
+    labels = [("  " * depth) + name for name, _, _, depth in rows]
+    width = max(len(label) for label in labels)
     print(f"{'TOPIC':<{width}}  CAPTURES  ALIASES")
-    for name, aliases, count in rows:
-        print(f"{name:<{width}}  {count:>8}  {', '.join(aliases) or '-'}")
+    for label, (_, aliases, count, _) in zip(labels, rows):
+        print(f"{label:<{width}}  {count:>8}  {', '.join(aliases) or '-'}")
     return 0
 
 

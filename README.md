@@ -139,7 +139,19 @@ mfp -py https://realpython.com/primer-on-python-decorators/
 
 Topic flags are invented on the spot — `-py` files into `py-professor/`, and
 typing `-python` later lands in the same place rather than making a second
-directory. The full capture manual is in
+directory. Abbreviate to whatever length reads well; `-py`, `-pyt` and
+`-python` all reach the same professor.
+
+A dot nests one level, for a subject that belongs under a professor you
+already have rather than beside it:
+
+```sh
+mfp -py.async https://docs.python.org/3/library/asyncio.html
+```
+
+That files into `py-professor/async/` — its own subject, with its own notes,
+archive and syllabus, under the same professor. Abbreviations work at both
+levels, so `-py.asy` lands there too. The full capture manual is in
 [`professor/capture/MANUAL.md`](professor/capture/MANUAL.md).
 
 Either way you get the same thing: a readable Markdown note, plus a hidden
@@ -159,6 +171,11 @@ Three separate places, deliberately. None of them is inside this repo.
     claude-references-provided/      what Claude fetched to fill a gap
     .captures/                       the archives, images and all
     .mfp-course/syllabus.json        the generated course map
+    async/                           a subtopic: mfp -py.async <url>
+      usr-references-provided/       the same four again, one level down
+      claude-references-provided/
+      .captures/
+      .mfp-course/syllabus.json
 
 ~/.my-favorite-professor/            your learning profile
   usr-learning-profile/
@@ -167,6 +184,7 @@ Three separate places, deliberately. None of them is inside this repo.
 
 ~/Downloads/my-favorite-professor/   the second copy
   py-professor/<title>-<hash>.html   self-contained, opens anywhere
+  py-professor/async/...             subtopics keep their shape here too
 ```
 
 **The profile is global on purpose.** It is about how *you* understand things,

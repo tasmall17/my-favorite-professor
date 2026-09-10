@@ -206,12 +206,34 @@ def find_capture(target: str, root: Path) -> Path:
                 if data.get("note") == candidate.name:
                     return capture.resolve()
 
-    matches = [p for p in root.glob(f"*/.captures/{target}") if p.is_dir()]
+    # Two depths, because a subtopic keeps its own .captures/ one level down.
+    # Globbed explicitly rather than with "**" so the search still cannot
+    # descend into assets/ directories or a topic's own captures-within-captures.
+    def at_either_depth(pattern: str) -> list[Path]:
+        return [
+            p
+            for depth in ("*", "*/*")
+            for p in root.glob(f"{depth}/.captures/{pattern}")
+            if p.is_dir()
+        ]
+
+    matches = at_either_depth(target)
     if not matches:
-        matches = [p for p in root.glob(f"*/.captures/*{target}*") if p.is_dir()]
+        matches = at_either_depth(f"*{target}*")
     if len(matches) == 1:
         return matches[0].resolve()
     if len(matches) > 1:
-        names = ", ".join(p.name for p in matches[:5])
+        # Name alone is ambiguous once the same page can be captured into both
+        # a topic and one of its subtopics, so say which topic each one is in.
+        # The full path from the library root, not the containing directory's
+        # name: a bare "react" beside "js-professor" reads like a second
+        # top-level topic rather than a child of the one listed next to it.
+        def topic_label(capture: Path) -> str:
+            try:
+                return capture.parent.parent.relative_to(root).as_posix()
+            except ValueError:
+                return capture.parent.parent.name
+
+        names = ", ".join(f"{topic_label(p)}/{p.name}" for p in matches[:5])
         raise CompileError(f"{target!r} matches several captures: {names}")
     raise CompileError(f"no capture found for {target!r}")

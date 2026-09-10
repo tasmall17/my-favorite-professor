@@ -40,6 +40,22 @@ COURSE_DIR = ".mfp-course"
 TOPIC_SUFFIX = "-professor"
 INBOX_TOPIC = "inbox"
 
+# The structural directories that make up a topic. A subtopic is simply any
+# *other* visible directory inside one, so these four names are the only ones a
+# subtopic may not be called -- otherwise `-js.usr-references-provided` would
+# hand back the notes directory itself as somewhere to file notes.
+#
+# Only the two visible names can actually collide in practice; the dot-prefixed
+# pair are filtered out by the same rule that hides them everywhere else. They
+# are listed anyway so this set answers "what is structure?" rather than "what
+# does the current filter happen to miss?".
+TOPIC_STRUCTURE_DIRNAMES = frozenset({
+    USER_REFS_DIR,
+    CLAUDE_REFS_DIR,
+    CAPTURES_DIR,
+    COURSE_DIR,
+})
+
 # Visible directories at the library root that are emphatically not subjects.
 # The topic registry treats every non-dot directory it finds as a topic and
 # writes an alias for it, so anything that lands beside the topics gets adopted
