@@ -8,6 +8,8 @@
 
 ```
 mfp [-TOPIC] URL [--open] [--no-t3] [--timeout SECONDS] [--quiet]
+mfp [-TOPIC] REPO [--repo] [--only GLOB] [--skip GLOB] [--max-bytes N]
+mfp [-TOPIC] URL --full [--depth N] [--max-pages N]
 mfp -n NAME [--new-topic]
 mfp --compile CAPTURE [--pdf | --html] [--open]
 mfp --topics | --link ALIAS=TOPIC | --rebuild
@@ -154,6 +156,80 @@ This does **not** create a second directory. It reports
 ```
 topic: 'python' -> existing py-professor/  (use --new-topic to separate)
 ```
+
+### Repositories
+
+A `github.com` URL pointing at a repository, a `tree/` listing or a `blob/`
+file is walked rather than fetched as a page. The page tier is actively wrong
+on one: it renders a file listing and a README and calls that the material.
+
+```
+mfp -py https://github.com/owner/repo                walks the default branch
+mfp -py https://github.com/owner/repo/tree/main/docs walks that subtree
+mfp -py --repo owner/repo                            shorthand, no URL needed
+mfp -py --page https://github.com/owner/repo         the rendered page instead
+```
+
+The whole recursive tree arrives in one API call, so nothing is crawled
+directory by directory. That call carries every file's **size**, which is what
+lets a 4 MB lockfile, a minified bundle and a PNG be rejected before any of
+them is downloaded. Only the survivors are fetched, concurrently.
+
+The result is one note: frontmatter, a directory tree, a table of contents,
+then every file in path order. Markdown files are inlined with their headings
+pushed down so they nest under their own filename; everything else is fenced
+with a language tag, using a fence long enough to survive backticks inside the
+file.
+
+Left out by default: dependency and build directories (`node_modules`,
+`vendor`, `dist`, `target`, `.venv` and friends), lockfiles, minified and
+generated files, and anything binary or of unrecognised type.
+
+| Option | Effect |
+|---|---|
+| `--only GLOB` | Include only matching paths. Repeatable. |
+| `--skip GLOB` | Exclude matching paths. Repeatable. |
+| `--max-bytes N` | Raise or lower the 2 MB budget. |
+| `--repo` | Force the walk, and accept `owner/repo` shorthand. |
+| `--page` | Capture a GitHub URL as an ordinary page. |
+
+Ceilings are 256 KB per file, 2 MB and 400 files per capture. Hitting one is
+reported in the note itself, not silently. GitHub allows 60 API requests an
+hour anonymously and 5000 authenticated, so a token from `gh auth login` or
+`GITHUB_TOKEN` is used when one is available. It is also what makes private
+repositories visible.
+
+### Full-site crawl
+
+`--full` treats the URL as the entry point into a site rather than a single
+page: it fetches it, extracts every link on it, and walks those the same way
+— a link found three pages in is followed exactly like one found on the
+first page. There is no separate recursion step; a visited set is what makes
+the walk stop rather than a depth counter, so a normal site simply runs out
+of new links to find.
+
+```
+mfp -py --full https://docs.example.com/guide/
+mfp -py --full --depth 2 https://docs.example.com/guide/
+mfp -py --full --max-pages 50 https://docs.example.com/guide/
+```
+
+Everything the crawl finds — including the origin page itself — lands in one
+subfolder, named from the origin URL and resolved exactly as `-py.<page>`
+would resolve by hand. Each page is written with the ordinary capture
+pipeline (note, archive, manifest); only the per-page asset-download chatter
+is suppressed, since a crawl of dozens of pages needs one status line per
+page, not each page's own image-fetch noise.
+
+Only links on the same domain as the origin page are followed; anything
+pointing elsewhere is left alone. A page that fails to fetch is recorded to
+`failed-attempts.csv` and skipped — one broken link does not stop the rest of
+the site from being captured.
+
+| Option | Effect |
+|---|---|
+| `--depth N` | Stop following links after N hops from the origin page. Unlimited by default. |
+| `--max-pages N` | Total page budget for the crawl (default 200). The real safety valve against a site that never runs out of "new" links (infinite pagination, a calendar widget). |
 
 ### Subtopics
 

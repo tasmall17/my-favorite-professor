@@ -30,9 +30,25 @@ Needs Python 3.12+ and an [Anthropic API key](https://console.anthropic.com/).
 # The -app suffix matters on macOS -- see the note at the bottom.
 git clone https://github.com/tasmall17/my-favorite-professor.git my-favorite-professor-app
 cd my-favorite-professor-app
-uv tool install --editable . --with patchright
-playwright install chromium          # only needed for capturing web pages
+./install.sh
 ```
+
+`install.sh` does four things and checks each one: installs `uv` if
+you don't have it, installs the app, puts `~/.local/bin` on your `PATH` in
+`~/.zshrc` if it isn't there already, and downloads Chromium for web capture.
+It is safe to re-run -- that's also how you reinstall after changing branches.
+Pass `--no-browser` to skip the Chromium download.
+
+<details>
+<summary>Or do it by hand</summary>
+
+```sh
+uv tool install --editable . --with patchright
+# `playwright` is a dependency's entry point, so uv doesn't put it on PATH:
+"$(uv tool dir)/my-favorite-professor/bin/playwright" install chromium
+```
+
+</details>
 
 Tested on Python 3.12 and 3.14, on macOS and Fedora.
 
@@ -68,7 +84,8 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 ```sh
 git clone https://github.com/tasmall17/my-favorite-professor.git my-favorite-professor-app
 cd my-favorite-professor-app
-uv tool install --editable . --with patchright
+./install.sh          # does steps 3 and 4 below as well, and tells you
+                      # the exact dnf command for step 4
 ```
 
 **3. Put `~/.local/bin` on your `PATH`.** This is the step that catches people,
@@ -153,6 +170,35 @@ That files into `py-professor/async/` — its own subject, with its own notes,
 archive and syllabus, under the same professor. Abbreviations work at both
 levels, so `-py.asy` lands there too. The full capture manual is in
 [`professor/capture/MANUAL.md`](professor/capture/MANUAL.md).
+
+**Capture a whole repository.** A GitHub URL walks the tree instead of
+scraping the page, because the page is a file listing and a README:
+
+```sh
+mfp -py https://github.com/owner/repo/tree/main/docs
+mfp -py --repo owner/repo
+```
+
+Every text file under that point, however deep, becomes one Markdown note: a
+directory tree, a table of contents, then each file in path order. Markdown is
+inlined and code is fenced with its language. Dependencies, build output,
+lockfiles, minified bundles and binaries are left out. Use `--only` and
+`--skip` with globs to narrow it, `--max-bytes` to raise the budget, and
+`--page` to capture a GitHub URL as an ordinary page after all.
+
+**Capture a whole site section.** `--full` follows every same-site link
+starting from the URL you give it, capturing each page it finds into one
+subfolder — like typing `-py.<page>` by hand for every link on the site:
+
+```sh
+mfp -py --full https://docs.example.com/guide/
+```
+
+It keeps going wherever those pages lead, stopping only when the site runs
+out of new links (a visited set, not a link-of-links stack, is what makes it
+terminate) or when `--max-pages` (default 200) is hit. Links to other domains
+are never followed. Use `--depth N` to stop following links after N hops
+instead.
 
 Either way you get the same thing: a readable Markdown note, plus a hidden
 archive holding the page with its images normalised and inlined, so the

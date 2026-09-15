@@ -18,7 +18,9 @@ import sys
 from pathlib import Path
 
 from . import fetch as fetch_module
+from . import full as full_module
 from . import journal
+from . import repo as repo_module
 from .capture import write_capture
 from .compile import CompileError, compile_html, compile_pdf, find_capture
 from .fetch import FetchError, fetch
@@ -30,7 +32,8 @@ RESERVED = {
     "-h", "--help", "--version", "--topics", "--link", "--new-topic",
     "--compile", "--pdf", "--html", "--open", "--retry-failed", "--self-test",
     "--timeout", "--library", "--quiet", "-q", "--topic", "--no-t3", "--rebuild",
-    "-n", "--new",
+    "-n", "--new", "--repo", "--page", "--max-bytes", "--only", "--skip",
+    "--full", "--depth", "--max-pages",
 }
 
 # The dot is what separates a topic from a subtopic, so it has to survive the
@@ -110,6 +113,25 @@ def build_parser() -> argparse.ArgumentParser:
                         help="run the fixture URLs and report coverage")
     parser.add_argument("--no-t3", action="store_true",
                         help="stop at the headless browser; skip the stealth/archive tier")
+    parser.add_argument("--repo", action="store_true",
+                        help="treat the URL as a GitHub subtree to walk")
+    parser.add_argument("--page", action="store_true",
+                        help="capture a GitHub URL as a page instead of walking it")
+    parser.add_argument("--max-bytes", type=int, metavar="N",
+                        help=f"repo size budget (default {repo_module.MAX_TOTAL_BYTES // 1024} KB)")
+    parser.add_argument("--only", action="append", metavar="GLOB", default=[],
+                        help="repo: include only paths matching GLOB (repeatable)")
+    parser.add_argument("--skip", action="append", metavar="GLOB", default=[],
+                        help="repo: exclude paths matching GLOB (repeatable)")
+    parser.add_argument("--full", action="store_true",
+                        help="follow every same-site hyperlink from the URL, "
+                             "capturing each one into a subfolder")
+    parser.add_argument("--depth", type=int, metavar="N",
+                        help="with --full, hop limit from the origin page "
+                             "(default: unlimited, stops when links run out)")
+    parser.add_argument("--max-pages", type=int, metavar="N",
+                        help=f"with --full, total page budget "
+                             f"(default {full_module.MAX_PAGES_DEFAULT})")
     parser.add_argument("--library", metavar="PATH", help="override the library root")
     parser.add_argument("--quiet", "-q", action="store_true")
     return parser
@@ -161,20 +183,20 @@ def _mirror(capture, topic: str, *, quiet: bool) -> str | None:
     return str(target.parent) if target else None
 
 
-def do_capture(url: str, topic_flag: str | None, args, root: Path) -> int:
-    registry = TopicRegistry(root)
-    alias = topic_flag or INBOX_TOPIC
-    resolution = registry.resolve(alias, force_new=args.new_topic)
+def _announce_topic(resolution, root: Path, quiet: bool) -> None:
+    """Print and journal how a topic (or subtopic) alias resolved.
 
-    # A first `-js.react` can create two directories. Reporting only the leaf
-    # would leave the new parent unmentioned, and the parent is the one the
-    # user has to live with if the funnel guessed its name wrong.
+    Shared by do_capture and do_full: a first `-js.react` can create two
+    directories, and reporting only the leaf would leave the new parent
+    unmentioned -- the parent is the one the user has to live with if the
+    funnel guessed its name wrong.
+    """
     if resolution.is_subtopic and resolution.parent_action == "created":
         journal.audit_create(resolution.parent, resolution.alias.split(".")[0], root=root)
-        if not args.quiet:
+        if not quiet:
             print(f"  topic: created {resolution.parent.name}/")
 
-    if not args.quiet:
+    if not quiet:
         if resolution.action == "created":
             print(f"  topic: created {resolution.label}/")
         elif resolution.action == "bound":
@@ -186,29 +208,75 @@ def do_capture(url: str, topic_flag: str | None, args, root: Path) -> int:
     elif resolution.action == "bound":
         journal.audit_link(resolution.alias, resolution.directory, root=root)
 
-    def announce(tier: str) -> None:
-        if not args.quiet:
-            print(f"  fetching [{tier}] ...")
 
-    try:
-        result = fetch(url, max_tier="T2" if args.no_t3 else "T3", on_tier=announce)
-    except FetchError as exc:
-        journal.record_failure(url, resolution.alias, exc.stage, exc.reason, root=root)
-        print(f"  FAILED  {exc.reason}", file=sys.stderr)
-        print(f"  logged to {journal.failures_file(root)}", file=sys.stderr)
-        return 1
+def do_capture(url: str, topic_flag: str | None, args, root: Path) -> int:
+    if args.full:
+        return do_full(url, topic_flag, args, root)
 
-    # topic_dir is the leaf, and a subtopic directory has the identical layout
-    # a topic does -- which is why nesting needs nothing from the capture layer.
+    registry = TopicRegistry(root)
+    alias = topic_flag or INBOX_TOPIC
+    resolution = registry.resolve(alias, force_new=args.new_topic)
+    _announce_topic(resolution, root, args.quiet)
+
+    # A repository URL goes to the repo tier by default, because the page tier
+    # is actively wrong on one: fetching github.com/owner/repo renders a file
+    # listing and a README and calls that the material. --page asks for the
+    # rendered page anyway, --repo forces the walk on a URL not recognised as
+    # one. topic_dir is the leaf, and a subtopic directory has the identical
+    # layout a topic does, which is why nesting needs nothing from either tier.
     # The *label* is the nested one, so the manifest and the mirror can tell a
     # subtopic note apart from a parent note of the same name.
-    capture = write_capture(
-        result,
-        topic_dir=resolution.directory,
-        topic=resolution.label,
-        original_url=url,
-        quiet=args.quiet,
+    walk_repo = args.repo or (
+        not args.page and repo_module.parse_repo_url(url) is not None
     )
+
+    if walk_repo:
+        def say(message: str) -> None:
+            if not args.quiet:
+                print(f"  repo: {message} ...")
+
+        options = repo_module.RepoOptions(
+            max_total_bytes=args.max_bytes or repo_module.MAX_TOTAL_BYTES,
+            only=tuple(args.only),
+            skip=tuple(args.skip),
+        )
+        try:
+            document = repo_module.capture_repo(
+                url, topic=resolution.label, options=options, on_status=say,
+            )
+        except repo_module.RepoError as exc:
+            journal.record_failure(url, resolution.alias, "REPO", exc.reason,
+                                   root=root)
+            print(f"  FAILED  {exc.reason}", file=sys.stderr)
+            print(f"  logged to {journal.failures_file(root)}", file=sys.stderr)
+            return 1
+
+        capture = repo_module.write_repo_capture(
+            document, topic_dir=resolution.directory, topic=resolution.label,
+        )
+    else:
+        def announce(tier: str) -> None:
+            if not args.quiet:
+                print(f"  fetching [{tier}] ...")
+
+        try:
+            result = fetch(url, max_tier="T2" if args.no_t3 else "T3",
+                           on_tier=announce)
+        except FetchError as exc:
+            journal.record_failure(url, resolution.alias, exc.stage, exc.reason,
+                                   root=root)
+            print(f"  FAILED  {exc.reason}", file=sys.stderr)
+            print(f"  logged to {journal.failures_file(root)}", file=sys.stderr)
+            return 1
+
+        document = None
+        capture = write_capture(
+            result,
+            topic_dir=resolution.directory,
+            topic=resolution.label,
+            original_url=url,
+            quiet=args.quiet,
+        )
     journal.audit_saved(url, capture.note_path, capture.tier,
                         updated=capture.updated, root=root)
 
@@ -222,7 +290,15 @@ def do_capture(url: str, topic_flag: str | None, args, root: Path) -> int:
         # flush whether the verb is "saved" or the longer "updated".
         print(f"  {verb + ':':<{_LABEL_W}}{capture.note_path.name}")
         print(f"  {'dir:':<{_LABEL_W}}{capture.note_path.parent.resolve()}")
-        detail = f"  {capture.word_count} words, {capture.assets_kept} images [{capture.tier}]"
+        if document is not None:
+            detail = (f"  {document.files} files, {capture.word_count} words "
+                      f"[{capture.tier}]")
+            if document.selection.skipped:
+                skipped = sum(document.selection.skipped.values())
+                detail += f"  ({skipped} skipped)"
+        else:
+            detail = (f"  {capture.word_count} words, {capture.assets_kept} "
+                      f"images [{capture.tier}]")
         if capture.from_archive:
             detail += "  (from web archive)"
         print(detail)
@@ -231,6 +307,61 @@ def do_capture(url: str, topic_flag: str | None, args, root: Path) -> int:
     if getattr(args, "open_after", False):
         _open_path(capture.note_path)
     return 0
+
+
+def do_full(url: str, topic_flag: str | None, args, root: Path) -> int:
+    """Walk every same-site link reachable from `url` into one subfolder.
+
+    The subfolder is resolved up front, exactly the directory `-xy.<page>`
+    would resolve to by hand, and every page the crawl finds -- including the
+    origin page itself -- is written into it with the ordinary write_capture()
+    pipeline. Asset-download noise is suppressed per page (quiet=True to
+    write_capture) regardless of --quiet; a crawl of dozens of pages needs its
+    own one-line-per-page status, not each page's own image-fetch chatter.
+    """
+    registry = TopicRegistry(root)
+    alias = topic_flag or INBOX_TOPIC
+    slug = full_module.page_slug(url)
+    resolution = registry.resolve(f"{alias}.{slug}", force_new=args.new_topic)
+    _announce_topic(resolution, root, args.quiet)
+
+    saved = 0
+    failed = 0
+
+    def on_page(page_url: str, depth: int, fetched, error) -> None:
+        nonlocal saved, failed
+        indent = "  " * min(depth, 4)
+        if error is not None:
+            failed += 1
+            journal.record_failure(page_url, resolution.alias, error.stage,
+                                   error.reason, root=root)
+            if not args.quiet:
+                print(f"  {indent}FAILED  {page_url}  ({error.reason})")
+            return
+
+        capture = write_capture(
+            fetched, topic_dir=resolution.directory, topic=resolution.label,
+            original_url=page_url, quiet=True,
+        )
+        journal.audit_saved(page_url, capture.note_path, capture.tier,
+                            updated=capture.updated, root=root)
+        saved += 1
+        if not args.quiet:
+            verb = "updated" if capture.updated else "saved"
+            print(f"  {indent}{verb}: {capture.note_path.name}  (depth {depth})")
+
+    options = full_module.FullOptions(
+        max_depth=args.depth,
+        max_pages=args.max_pages or full_module.MAX_PAGES_DEFAULT,
+        max_tier="T2" if args.no_t3 else "T3",
+    )
+    full_module.crawl(url, options, on_page=on_page)
+
+    if not args.quiet:
+        print()
+        print(f"  full: {saved} page(s) captured, {failed} failed")
+        print(f"  {'dir:':<{_LABEL_W}}{resolution.directory.resolve()}")
+    return 0 if saved > 0 else 1
 
 
 def do_new_topic(name: str, root: Path, *, force: bool = False) -> int:
